@@ -2263,6 +2263,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         >(null);
         const activeRuntimePolicy =
           yield* Ref.make<ProviderAdapter.ProviderAdapterV2RuntimePolicy | null>(null);
+        // Session mode and config derive from more of the policy than its runtime mode.
+        const sessionPolicyKey = (policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy) =>
+          JSON.stringify([
+            flavor.sessionModeForPolicy?.(policy),
+            flavor.sessionConfigForPolicy?.(policy),
+          ]);
         const promptInstructionStates = yield* Ref.make(new Map<string, T3AcpInstructionState>());
         const promptRuntimeInstructions = yield* Ref.make(new Map<string, string>());
         // Unique markers keep delayed prompt completions from clearing later compactions.
@@ -8262,6 +8268,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           } else {
             const nativeBuild = nativeBuildConfigurationBySessionId.get(startResult.sessionId);
             if (nativeBuild !== undefined) {
+              // The policy mode applied above already left Plan; a saved mode may predate a policy change.
               if (
                 policyMode === undefined &&
                 nativeBuild.modeId !== undefined &&
@@ -8279,7 +8286,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 if (
                   option === undefined ||
                   option.type !== "select" ||
-                  (policyMode !== undefined && option.category === "mode")
+                  (policyMode !== undefined && (option.category === "mode" || option.id === "mode"))
                 )
                   continue;
                 const choices = option.options.flatMap((entry) =>
@@ -9208,7 +9215,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 configuredInteractionMode !== turnInput.runtimePolicy.interactionMode ||
                 (yield* Ref.get(configuredRuntimeMode)) !== turnInput.runtimePolicy.runtimeMode ||
                 configuredRuntimePolicy === null ||
-                configuredRuntimePolicy.maxRuntimeMode !== turnInput.runtimePolicy.maxRuntimeMode
+                configuredRuntimePolicy.maxRuntimeMode !== turnInput.runtimePolicy.maxRuntimeMode ||
+                sessionPolicyKey(configuredRuntimePolicy) !==
+                  sessionPolicyKey(turnInput.runtimePolicy)
               ) {
                 const currentSessionSetup = yield* Ref.get(activeSessionSetup);
                 if (currentSessionSetup === null) {
@@ -10458,6 +10467,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     yield* setActiveSessionSetup(activated);
                     yield* Ref.set(activeSelection, null);
                     yield* Ref.set(activeInteractionMode, null);
+                    yield* Ref.set(activeRuntimePolicy, null);
                   }
                   const state = yield* Ref.get(snapshot);
                   const messages = state.order.flatMap((key) => {
@@ -10597,6 +10607,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   yield* setActiveSessionSetup(forked);
                   yield* Ref.set(activeSelection, null);
                   yield* Ref.set(activeInteractionMode, null);
+                  yield* Ref.set(activeRuntimePolicy, null);
                   itemIdentityVersion = 2;
                   const now = yield* DateTime.now;
                   const providerThread = makeProviderThread({
