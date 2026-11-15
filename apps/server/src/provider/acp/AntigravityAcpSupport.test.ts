@@ -4,6 +4,7 @@ import {
   ANTIGRAVITY_DEFAULT_MODEL,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   type ChatAttachment,
+  type RuntimeMode,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
@@ -22,6 +23,8 @@ import {
   antigravityRuntimeModeForSessionMode,
   antigravitySessionMeta,
   applyAntigravityAcpModelSelection,
+  antigravityPermissionDisposition,
+  antigravityReleaseOffersAutoMode,
   buildAntigravityPrompt,
   isQualifiedAntigravityRelease,
 } from "./AntigravityAcpSupport.ts";
@@ -110,10 +113,10 @@ describe("Antigravity session mode mapping", () => {
     const cliWithoutAuto = new Set(["default", "accept-edits", "plan"]);
     const managedModes = new Set(["default", "auto_edit", "yolo", "plan"]);
 
-    expect(antigravityPermissionMode("full-access")).toBe("yolo");
-    expect(antigravityPermissionMode("auto")).toBe("auto");
-    expect(antigravityPermissionMode("auto-accept-edits")).toBe("auto_edit");
-    expect(antigravityPermissionMode("approval-required")).toBe("default");
+    expect(antigravityPermissionMode({ runtimeMode: "full-access" })).toBe("yolo");
+    expect(antigravityPermissionMode({ runtimeMode: "auto" })).toBe("auto");
+    expect(antigravityPermissionMode({ runtimeMode: "auto-accept-edits" })).toBe("auto_edit");
+    expect(antigravityPermissionMode({ runtimeMode: "approval-required" })).toBe("default");
 
     expect(antigravityCliSessionMode("yolo", cliModes)).toBe("default");
     expect(antigravityCliSessionMode("auto_edit", cliModes)).toBe("accept-edits");
@@ -130,6 +133,65 @@ describe("Antigravity session mode mapping", () => {
     expect(antigravityRuntimeModeForSessionMode("accept-edits")).toBe("auto-accept-edits");
     expect(antigravityRuntimeModeForSessionMode("auto_edit")).toBe("auto-accept-edits");
     expect(antigravityRuntimeModeForSessionMode("default")).toBe("approval-required");
+  });
+});
+
+describe("Antigravity permission modes", () => {
+  const policy = (
+    runtimeMode: RuntimeMode,
+    overrides: { readonly approvalPolicy?: unknown; readonly sandboxPolicy?: unknown } = {},
+  ) => ({ runtimeMode, cwd: "/workspace", ...overrides });
+  const request = (kind: EffectAcpSchema.ToolKind) =>
+    ({
+      sessionId: "session-1",
+      toolCall: { toolCallId: "tool-1", kind },
+      options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }],
+    }) satisfies EffectAcpSchema.RequestPermissionRequest;
+
+  it("expects automatic review from agy 1.5.4, never from the 1.4 harness", () => {
+    expect(
+      ["1.5.4", "1.5.6", "1.6.0", "1.5.3", "1.4.5", "agy_acp_server_20260818_01_RC01", null].map(
+        antigravityReleaseOffersAutoMode,
+      ),
+    ).toEqual([true, true, true, false, false, false, false]);
+  });
+
+  it("maps Auto to the agent's automatic review", () => {
+    expect(antigravityPermissionMode(policy("auto"))).toBe("auto");
+    expect(antigravityRuntimeModeForSessionMode("auto")).toBe("auto");
+  });
+
+  it("leaves Auto prompts to the user instead of approving them", () => {
+    const auto = { offersAuto: true };
+    const noAuto = { offersAuto: false };
+    const disposition = antigravityPermissionDisposition;
+    // In `auto` a prompt is a review refusal, so even a read reaches the user.
+    for (const kind of ["read", "edit", "execute"] as const) {
+      expect(disposition(policy("auto"), request(kind), auto)).toBe("ask");
+    }
+    // A session without `auto` stays in `default` and is answered as Supervised.
+    expect(
+      (["read", "edit", "execute"] as const).map((kind) =>
+        disposition(policy("auto"), request(kind), noAuto),
+      ),
+    ).toEqual(
+      (["read", "edit", "execute"] as const).map((kind) =>
+        disposition(policy("approval-required"), request(kind), noAuto),
+      ),
+    );
+    expect(disposition(policy("auto"), request("read"), noAuto)).toBe("allow");
+    // An explicit policy keeps the agent asking and answers for itself.
+    const readOnly = policy("auto", {
+      approvalPolicy: "never",
+      sandboxPolicy: { type: "readOnly" },
+    });
+    expect(antigravityPermissionMode(readOnly)).toBe("default");
+    expect(disposition(readOnly, request("execute"), auto)).toBe("deny");
+    // The other modes still answer from the shared ACP policy.
+    expect(disposition(policy("full-access"), request("execute"), auto)).toBe("allow");
+    expect(disposition(policy("auto-accept-edits"), request("edit"), auto)).toBe("allow");
+    expect(disposition(policy("auto-accept-edits"), request("execute"), auto)).toBe("ask");
+    expect(disposition(policy("approval-required"), request("edit"), auto)).toBe("ask");
   });
 });
 
