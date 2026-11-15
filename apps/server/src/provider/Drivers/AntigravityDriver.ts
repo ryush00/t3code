@@ -44,7 +44,9 @@ import {
   type AntigravityAuthConfig,
 } from "../antigravityAuthSupport.ts";
 import {
+  antigravityAdvertisedModeIds,
   antigravityCliSessionMode,
+  antigravityManagedSessionMode,
   antigravityModelOptions,
   antigravityThinkingConfig,
   makeAntigravityAcpRuntime,
@@ -279,13 +281,22 @@ export const AntigravityDriver: ProviderDriver<
           baseEnv: processEnvironment,
           auth,
           runtimeTempDirectory,
+          skipPermissions: input.runtimePolicy?.runtimeMode === "full-access",
         }),
       }).pipe(Effect.provideService(SecureRandom.SecureRandom, random));
       return {
         ...runtime,
-        ...(executable.harnessPath === null
-          ? { setMode: (modeId: string) => runtime.setMode(antigravityCliSessionMode(modeId)) }
-          : {}),
+        setMode: Effect.fn("AntigravityDriver.setMode")(function* (modeId: string) {
+          const availableModeIds = antigravityAdvertisedModeIds(
+            yield* runtime.getModeState,
+            yield* runtime.getConfigOptions,
+          );
+          const resolved =
+            executable.harnessPath === null
+              ? antigravityCliSessionMode(modeId, availableModeIds)
+              : antigravityManagedSessionMode(modeId, availableModeIds);
+          return yield* runtime.setMode(resolved);
+        }),
         start: () =>
           runtime
             .start()
