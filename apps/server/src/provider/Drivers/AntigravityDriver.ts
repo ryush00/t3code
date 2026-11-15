@@ -207,6 +207,7 @@ export const AntigravityDriver: ProviderDriver<
     const prepareSpawn = Effect.fn("AntigravityDriver.prepareSpawn")(function* (
       cwd: string,
       baseEnv: NodeJS.ProcessEnv,
+      options?: { readonly skipPermissions?: boolean | undefined },
     ): Effect.fn.Return<
       {
         readonly executable: AntigravityInstallation.AntigravityExecutable;
@@ -287,6 +288,7 @@ export const AntigravityDriver: ProviderDriver<
           baseEnv,
           auth,
           runtimeTempDirectory,
+          ...(options?.skipPermissions === true ? { skipPermissions: true } : {}),
         }),
       };
     });
@@ -306,6 +308,7 @@ export const AntigravityDriver: ProviderDriver<
         threadEnvironment === undefined
           ? processEnvironment
           : { ...processEnvironment, ...threadEnvironment },
+        { skipPermissions: input.runtimePolicy?.runtimeMode === "full-access" },
       );
       const runtime = yield* makeAntigravityAcpRuntime({
         ...runtimeInput,
