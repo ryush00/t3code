@@ -29,6 +29,7 @@ import {
   type AcpRuntimePolicy,
 } from "@t3tools/provider-acp/server/clientPolicy";
 import type { AcpSessionModeState } from "@t3tools/provider-acp/server/runtimeModel";
+import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { T3_MCP_TOOL_NAMES } from "@t3tools/shared/t3McpToolPresentation";
 import packageJson from "../../../package.json" with { type: "json" };
 import { normalizeAntigravitySessionUpdate } from "./AntigravityProtocol.ts";
@@ -56,6 +57,7 @@ export interface AntigravityAcpRuntimeInput extends Omit<
   /** Conversational sessions only; helpers and probes leave the system prompt untouched. */
   readonly sessionSystemPromptAppend?: string;
   readonly authMethod?: AntigravityAuthMethod;
+  readonly runtimePolicy?: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
 }
 
 function parseAntigravityVersion(version: string | null | undefined) {
