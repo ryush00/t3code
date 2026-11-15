@@ -35,10 +35,17 @@ import {
 import { readAntigravityClientTextFile } from "../../provider/acp/AntigravityClientFiles.ts";
 import { watchAntigravityPromptOutcome } from "../../provider/acp/AntigravityTurnOutcome.ts";
 import {
+  makeAntigravityPostSettleWakeWatcher,
+  rewriteAntigravityUserText,
+  type AntigravityWakeWatcherOptions,
+} from "../../provider/acp/AntigravityWakeWatcher.ts";
+import {
   antigravityApprovalOptions,
   antigravitySubagentOutput,
   classifyAntigravitySubagentToolCall,
+  extractAntigravityBackgroundTaskId,
   extractAntigravityUserInputQuestion,
+  isAntigravityBackgroundCommandTool,
   makeAntigravityReadRepair,
   makeAntigravityUserInputResponse,
   normalizeAntigravityToolCall,
@@ -98,6 +105,7 @@ export interface AntigravityAdapterV2Options {
   readonly continuationRequests?: Parameters<typeof makeAcpAdapterV2>[0]["continuationRequests"];
   /** The agent's GEMINI_HOME. Its session logs show turns that ended on an upstream error. */
   readonly profileDirectory?: string;
+  readonly wakeWatcherOptions?: AntigravityWakeWatcherOptions;
 }
 
 /**
@@ -257,7 +265,10 @@ export function makeAntigravityAcpAdapterFlavor(
       });
     }),
     sessionModeForPolicy: (policy) => antigravityPermissionMode(policy.runtimeMode),
+    requiresRuntimeRestartForPolicyChange: (previous, next) =>
+      (previous.runtimeMode === "full-access") !== (next.runtimeMode === "full-access"),
     runtimeModeForSessionMode: antigravityRuntimeModeForSessionMode,
+    rewriteUserText: rewriteAntigravityUserText,
     clientFileSystem: {
       readTextFile: (request, cwd) =>
         readAntigravityClientTextFile({
@@ -277,6 +288,8 @@ export function makeAntigravityAcpAdapterFlavor(
       };
     },
     normalizeToolCall: normalizeAntigravityToolCall,
+    extractBackgroundTaskId: extractAntigravityBackgroundTaskId,
+    isBackgroundCommandTool: isAntigravityBackgroundCommandTool,
     extractSubagentUpdate: extractAntigravitySubagentUpdate,
     supportsImagePrompts: true,
     // ACP 1.3.0 treats /compact as ordinary model input.
@@ -292,6 +305,10 @@ export function makeAntigravityAcpAdapterFlavor(
       : {
           watchPromptOutcome: (sessionId: string) =>
             watchAntigravityPromptOutcome(profileDirectory, sessionId),
+          watchPostSettleWake: makeAntigravityPostSettleWakeWatcher(
+            profileDirectory,
+            options.wakeWatcherOptions,
+          ),
         }),
   };
 }

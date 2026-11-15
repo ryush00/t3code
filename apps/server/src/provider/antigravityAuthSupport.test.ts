@@ -127,6 +127,31 @@ describe("Antigravity process environment", () => {
     ]);
     expect(spawn.env).not.toHaveProperty("ANTIGRAVITY_HARNESS_PATH");
     expect(spawn.env).toMatchObject({ GEMINI_HOME: profile.geminiHome, PATH: "/usr/bin" });
+
+    const fullAccessCli = buildAntigravityAcpSpawnInput({
+      installation: { executablePath: "/usr/bin/agy", harnessPath: null },
+      profile,
+      cwd: "/project",
+      baseEnv: { PATH: "/usr/bin" },
+      skipPermissions: true,
+    });
+    expect(fullAccessCli.args).toEqual([
+      "acp",
+      "--gemini-dir",
+      profile.geminiHome,
+      "--app-data-dir",
+      "antigravity-acp",
+      "--dangerously-skip-permissions",
+    ]);
+
+    const fullAccessManaged = buildAntigravityAcpSpawnInput({
+      installation: { executablePath: "/release/acp", harnessPath: "/release/harness" },
+      profile,
+      cwd: "/project",
+      baseEnv: { PATH: "/usr/bin" },
+      skipPermissions: true,
+    });
+    expect(fullAccessManaged.args).toEqual(["--uid="]);
   });
 
   it("passes only the configured method's credential and keeps the GCP pair out of the environment", () => {
