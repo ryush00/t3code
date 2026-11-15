@@ -4,6 +4,10 @@ T3 Code is a minimal GUI for coding agents. A Node WebSocket server wraps provid
 
 You can think of T3 Code as an open source "bring-your-own-subscription" alternative to apps like Claude Desktop, Codex App, Cursor Glass and Conductor.
 
+## This checkout is a fork
+
+`ryush00/t3code` tracks upstream `pingdotgg/t3code`. `main` is a pure mirror of upstream; never commit to it. Work lands on `fork`, the default branch, as a thin patch stack rebased onto `main`, and ships as nightly prereleases. Read [FORK.md](FORK.md) before touching branches, releases, or workflows, and use the `fork-sync` skill to sync.
+
 ## What makes T3 Code special?
 
 We have over 500,000 users who love T3 Code. It's important we maintain the things they love as we continue to iterate on the product. Here's a brief list of the things we can never compromise on.
