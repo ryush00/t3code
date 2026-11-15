@@ -15,9 +15,13 @@ import type * as EffectAcpSchema from "effect-acp/compat";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import {
-  applyAntigravityAcpModelSelection,
+  antigravityCliSessionMode,
   antigravityClientInfo,
+  antigravityManagedSessionMode,
+  antigravityPermissionMode,
+  antigravityRuntimeModeForSessionMode,
   antigravitySessionMeta,
+  applyAntigravityAcpModelSelection,
   buildAntigravityPrompt,
   isQualifiedAntigravityRelease,
 } from "./AntigravityAcpSupport.ts";
@@ -98,6 +102,35 @@ describe("Antigravity release gates", () => {
       expect(antigravityClientInfo(version).name).toBe(ownName ? "t3-code" : "zed");
     },
   );
+});
+
+describe("Antigravity session mode mapping", () => {
+  it("maps runtime policies across CLI and managed mode sets", () => {
+    const cliModes = new Set(["default", "accept-edits", "auto", "plan"]);
+    const cliWithoutAuto = new Set(["default", "accept-edits", "plan"]);
+    const managedModes = new Set(["default", "auto_edit", "yolo", "plan"]);
+
+    expect(antigravityPermissionMode("full-access")).toBe("yolo");
+    expect(antigravityPermissionMode("auto")).toBe("auto");
+    expect(antigravityPermissionMode("auto-accept-edits")).toBe("auto_edit");
+    expect(antigravityPermissionMode("approval-required")).toBe("default");
+
+    expect(antigravityCliSessionMode("yolo", cliModes)).toBe("default");
+    expect(antigravityCliSessionMode("auto_edit", cliModes)).toBe("accept-edits");
+    expect(antigravityCliSessionMode("auto", cliModes)).toBe("auto");
+    expect(antigravityCliSessionMode("auto", cliWithoutAuto)).toBe("default");
+    expect(antigravityCliSessionMode("plan", cliModes)).toBe("plan");
+
+    expect(antigravityManagedSessionMode("yolo", managedModes)).toBe("yolo");
+    expect(antigravityManagedSessionMode("accept-edits", managedModes)).toBe("auto_edit");
+    expect(antigravityManagedSessionMode("auto", managedModes)).toBe("default");
+
+    expect(antigravityRuntimeModeForSessionMode("yolo")).toBe("full-access");
+    expect(antigravityRuntimeModeForSessionMode("auto")).toBe("auto");
+    expect(antigravityRuntimeModeForSessionMode("accept-edits")).toBe("auto-accept-edits");
+    expect(antigravityRuntimeModeForSessionMode("auto_edit")).toBe("auto-accept-edits");
+    expect(antigravityRuntimeModeForSessionMode("default")).toBe("approval-required");
+  });
 });
 
 describe("applyAntigravityAcpModelSelection", () => {
