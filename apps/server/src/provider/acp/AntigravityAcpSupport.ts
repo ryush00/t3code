@@ -24,6 +24,7 @@ import {
   makeAntigravityStdoutTransform,
 } from "../antigravityAuthSupport.ts";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import packageJson from "../../../package.json" with { type: "json" };
 import { normalizeAntigravitySessionUpdate } from "./AntigravityProtocol.ts";
 
@@ -50,6 +51,7 @@ export interface AntigravityAcpRuntimeInput extends Omit<
   /** Conversational sessions only; helpers and probes leave the system prompt untouched. */
   readonly sessionSystemPromptAppend?: string;
   readonly authMethod?: AntigravityAuthMethod;
+  readonly runtimePolicy?: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
 }
 
 function parseAntigravityVersion(version: string | null | undefined) {
@@ -184,21 +186,62 @@ export function antigravityPermissionMode(runtimeMode: RuntimeMode): string {
   switch (runtimeMode) {
     case "full-access":
       return "yolo";
+    case "auto":
+      return "auto";
     case "auto-accept-edits":
       return "auto_edit";
-    case "auto":
     case "approval-required":
       return "default";
   }
 }
 
 /**
- * The agy CLI rejects the managed runtime's `yolo` and `auto_edit`. It stays in `default`, where
- * it asks before acting and T3 answers from the live runtime policy, so permission changes apply
- * on the next turn without a restart.
+ * Resolves the session mode to send to the `agy` CLI (`harnessPath === null`).
+ * `agy` advertises `default`, `accept-edits`, `auto`, and `plan` instead of the managed
+ * runtime's `yolo` and `auto_edit`; `full-access` uses `--dangerously-skip-permissions`
+ * at spawn and stays in `default` so accounts without `auto` still auto-approve every tool.
  */
-export function antigravityCliSessionMode(modeId: string): string {
-  return modeId === "yolo" || modeId === "auto_edit" ? "default" : modeId;
+export function antigravityCliSessionMode(
+  modeId: string,
+  availableModeIds?: ReadonlySet<string>,
+): string {
+  const chooseIfAvailable = (candidate: string): string =>
+    availableModeIds === undefined
+      ? candidate === "accept-edits" || candidate === "auto"
+        ? "default"
+        : candidate
+      : availableModeIds.has(candidate)
+        ? candidate
+        : "default";
+  switch (modeId) {
+    case "yolo":
+      return "default";
+    case "auto_edit":
+    case "accept-edits":
+      return chooseIfAvailable("accept-edits");
+    case "auto":
+      return chooseIfAvailable("auto");
+    case "plan":
+      return chooseIfAvailable("plan");
+    default:
+      return availableModeIds === undefined || availableModeIds.has(modeId) ? modeId : "default";
+  }
+}
+
+/** Managed `agy_acp_server` advertises `yolo`, `auto_edit`, `default`, and `plan`, without `auto`. */
+export function antigravityManagedSessionMode(
+  modeId: string,
+  availableModeIds?: ReadonlySet<string>,
+): string {
+  if (modeId === "accept-edits") {
+    return availableModeIds === undefined || availableModeIds.has("auto_edit")
+      ? "auto_edit"
+      : "default";
+  }
+  if (modeId === "auto") {
+    return availableModeIds?.has("auto") === true ? "auto" : "default";
+  }
+  return availableModeIds === undefined || availableModeIds.has(modeId) ? modeId : "default";
 }
 
 /** The runtime mode an Antigravity session mode grants; the inverse of `antigravityPermissionMode`. */
@@ -206,13 +249,39 @@ export function antigravityRuntimeModeForSessionMode(modeId: string): RuntimeMod
   switch (modeId) {
     case "yolo":
       return "full-access";
+    case "auto":
+      return "auto";
     case "auto_edit":
+    case "accept-edits":
       return "auto-accept-edits";
     case "default":
       return "approval-required";
     default:
       return undefined;
   }
+}
+
+export function antigravityAdvertisedModeIds(
+  modeState: { readonly availableModes: ReadonlyArray<{ readonly id: string }> } | undefined,
+  configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
+): ReadonlySet<string> | undefined {
+  const ids = new Set<string>();
+  for (const mode of modeState?.availableModes ?? []) {
+    ids.add(mode.id);
+  }
+  const modeOption = configOptions.find(
+    (option) => option.id === "mode" || option.category === "mode",
+  );
+  if (modeOption?.type === "select") {
+    for (const entry of modeOption.options) {
+      if ("value" in entry) {
+        ids.add(entry.value);
+      } else {
+        for (const choice of entry.options) ids.add(choice.value);
+      }
+    }
+  }
+  return ids.size > 0 ? ids : undefined;
 }
 
 export function antigravityModelOptions(
