@@ -4,10 +4,12 @@ import type * as EffectAcpSchema from "effect-acp/compat";
 import * as AcpWireSchema from "effect-acp/schema-v1";
 
 import {
+  extractAntigravityBackgroundTaskId,
   extractAntigravityUserInputQuestion,
   antigravityApprovalOptions,
   antigravitySubagentOutput,
   classifyAntigravitySubagentToolCall,
+  isAntigravityBackgroundCommandTool,
   isAntigravityUserInputRequest,
   makeAntigravityUserInputResponse,
   normalizeAntigravitySessionUpdate,
@@ -290,6 +292,110 @@ describe("Antigravity tool results", () => {
     });
     expect(toolCall.data.rawOutput).not.toHaveProperty("formatted_output");
     expect(commandCompleted.update.rawOutput.formatted_output).toBe("after\n");
+  });
+
+  it("keeps detached background commands and one-shot timers in progress until completion output arrives", () => {
+    const backgroundStarted = parseToolUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "bg-cmd-1",
+        title: "run_command",
+        kind: "execute",
+        status: "in_progress",
+        rawInput: { CommandLine: "sleep 3 && echo WAKE_OK", WaitMsBeforeAsync: 500 },
+      },
+    }).toolCall;
+    const backgroundDetached = parseToolUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "bg-cmd-1",
+        status: "completed",
+        rawOutput: "Tool is running as a background task with task id: conv-1/task-0\n",
+      },
+    }).toolCall;
+    const detachedCmd = normalizeAntigravityToolCall(
+      mergeToolCallState(backgroundStarted, backgroundDetached),
+    );
+    expect(detachedCmd.status).toBe("inProgress");
+    expect(extractAntigravityBackgroundTaskId(detachedCmd)).toBe("antigravity-bg:bg-cmd-1");
+    expect(isAntigravityBackgroundCommandTool(detachedCmd)).toBe(true);
+
+    const backgroundFinished = parseToolUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "bg-cmd-1",
+        status: "completed",
+        rawOutput: {
+          commandLine: "sleep 3 && echo WAKE_OK",
+          combinedOutput: "WAKE_OK\n",
+          exitCode: 0,
+        },
+      },
+    }).toolCall;
+    const finishedCmd = normalizeAntigravityToolCall(
+      mergeToolCallState(detachedCmd, backgroundFinished),
+    );
+    expect(finishedCmd.status).toBe("completed");
+    expect(extractAntigravityBackgroundTaskId(finishedCmd)).toBe("antigravity-bg:bg-cmd-1");
+
+    const scheduleDetached = normalizeAntigravityToolCall(
+      mergeToolCallState(
+        parseToolUpdate({
+          sessionId: "session-1",
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "sched-1",
+            title: "Running schedule",
+            kind: "other",
+            status: "in_progress",
+            rawInput: { DurationSeconds: 5, Prompt: "check CI" },
+          },
+        }).toolCall,
+        parseToolUpdate({
+          sessionId: "session-1",
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "sched-1",
+            status: "completed",
+            rawOutput: "Tool is running as a background task with task id: conv-1/task-1\n",
+          },
+        }).toolCall,
+      ),
+    );
+    expect(scheduleDetached.status).toBe("inProgress");
+    expect(extractAntigravityBackgroundTaskId(scheduleDetached)).toBe("antigravity-bg:sched-1");
+    expect(isAntigravityBackgroundCommandTool(scheduleDetached)).toBe(true);
+
+    const daemonCmd = normalizeAntigravityToolCall(
+      mergeToolCallState(
+        parseToolUpdate({
+          sessionId: "session-1",
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "daemon-1",
+            title: "run_command",
+            kind: "execute",
+            status: "in_progress",
+            rawInput: { CommandLine: "vp run dev", IsDaemon: true, WaitMsBeforeAsync: 500 },
+          },
+        }).toolCall,
+        parseToolUpdate({
+          sessionId: "session-1",
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "daemon-1",
+            status: "completed",
+            rawOutput: "Tool is running as a background task with task id: conv-1/task-2\n",
+          },
+        }).toolCall,
+      ),
+    );
+    expect(daemonCmd.status).toBe("completed");
+    expect(extractAntigravityBackgroundTaskId(daemonCmd)).toBeUndefined();
+    expect(isAntigravityBackgroundCommandTool(daemonCmd)).toBe(false);
   });
 
   it("keeps the captured edit location through approval and completion", () => {

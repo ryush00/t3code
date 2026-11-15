@@ -5,6 +5,7 @@ import {
   type ModelSelection,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2ExecutionNode,
+  type OrchestrationV2Notification,
   type OrchestrationV2PlanArtifact,
   type OrchestrationV2PlanStep,
   type OrchestrationV2ProviderCapabilities,
@@ -449,6 +450,14 @@ export interface AcpAdapterV2Flavor {
     policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
   ) => string | undefined;
   /**
+   * True when switching between two runtime policies requires respawning the ACP process
+   * (for example when CLI startup flags gate full-access bypass).
+   */
+  readonly requiresRuntimeRestartForPolicyChange?: (
+    previous: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
+    next: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
+  ) => boolean;
+  /**
    * Native select-option values to apply for a runtime policy (e.g. Kiro's
    * `autopilot`), set on every session configure. A value the session does
    * not advertise is skipped; an agent rejecting it fails the session.
@@ -579,6 +588,17 @@ export interface AcpAdapterV2Flavor {
   readonly isProviderWakeNotification?: (
     notification: EffectAcpSchema.SessionNotification,
   ) => boolean;
+  /**
+   * Watches out-of-band native session logs after a completed turn for agents that end
+   * `session/prompt` early without emitting ACP wake frames until re-prompted.
+   */
+  readonly watchPostSettleWake?: (input: {
+    readonly sessionId: string;
+    readonly offerWake: (options?: {
+      readonly detail?: string | null;
+      readonly notification?: OrchestrationV2Notification;
+    }) => Effect.Effect<boolean>;
+  }) => Effect.Effect<void, never, Scope.Scope>;
   readonly deferFinalizeForBackgroundWork?: boolean;
   readonly assertComplete?: Effect.Effect<void, EffectAcpErrors.AcpError>;
   /** Interrupt the local prompt fiber before `session/cancel` (Grok wedged prompts). */
@@ -2093,6 +2113,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         });
         const activeSelection = yield* Ref.make<ModelSelection | null>(null);
         const activeInteractionMode = yield* Ref.make<ProviderInteractionMode | null>(null);
+        const activeRuntimePolicy =
+          yield* Ref.make<ProviderAdapter.ProviderAdapterV2RuntimePolicy | null>(null);
+        const postSettleWakeFiber = yield* Ref.make<Fiber.Fiber<void, never> | null>(null);
+        const stopPostSettleWakeWatcher = Ref.getAndSet(postSettleWakeFiber, null).pipe(
+          Effect.flatMap((fiber) =>
+            fiber === null ? Effect.void : Fiber.interrupt(fiber).pipe(Effect.asVoid),
+          ),
+        );
         const promptInstructionStates = yield* Ref.make(new Map<string, T3AcpInstructionState>());
         const promptRuntimeInstructions = yield* Ref.make(new Map<string, string>());
         // Unique markers keep delayed prompt completions from clearing later compactions.
@@ -2567,8 +2595,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             handleRuntimeTerminationAtGeneration(runtimeGeneration),
         ): AcpAdapterV2RuntimeInput => {
           return {
-            cwd: input.runtimePolicy.cwd ?? process.cwd(),
-            runtimePolicy: input.runtimePolicy,
+            cwd: latestRuntimePolicy.cwd ?? input.runtimePolicy.cwd ?? process.cwd(),
+            runtimePolicy: latestRuntimePolicy,
             mcpServers: mcpContext.servers,
             acpMcpServers: mcpContext.acpServers,
             httpMcpServers: mcpContext.httpServers,
@@ -4100,7 +4128,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           const previous = context.tools.get(incoming.toolCallId);
           const merged = mergeToolCallState(previous, incoming);
           const normalized = flavor.normalizeToolCall?.(merged) ?? merged;
-          const backgroundTaskId = flavor.extractBackgroundTaskId?.(normalized);
+          const backgroundTaskId =
+            flavor.extractBackgroundTaskId?.(normalized) ?? previous?.backgroundCommandTaskId;
           const backgroundCommandTaskId =
             flavor.isBackgroundCommandTool?.(normalized) === true
               ? backgroundTaskId
@@ -4838,7 +4867,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             });
           });
 
-        const offerContinuationRun = Effect.fnUntraced(function* (_sessionId: string) {
+        const offerContinuationRun = Effect.fnUntraced(function* (
+          _sessionId: string,
+          wakeOptions?: {
+            readonly delivery?: "adapter_buffered" | "message_text";
+            readonly detail?: string | null;
+            readonly notification?: OrchestrationV2Notification;
+          },
+        ) {
           if (continuationRequests === undefined) {
             return false;
           }
@@ -4863,7 +4899,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           );
           if (Option.isNone(pending)) return false;
           const { route, generation, reports } = pending.value;
-          const notification = backgroundWorkNotification([...reports.values()]);
+          const notification =
+            wakeOptions?.notification ?? backgroundWorkNotification([...reports.values()]);
           yield* Effect.logInfo("orchestration-v2.acp-wake-turn-detected", {
             driver,
             providerSessionId: input.providerSessionId,
@@ -4874,7 +4911,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             threadId: route.threadId,
             providerThreadId: route.providerThreadId,
             driver,
-            detail: null,
+            detail: wakeOptions?.detail ?? null,
+            ...(wakeOptions?.delivery === undefined ? {} : { delivery: wakeOptions.delivery }),
             ...(notification === null ? {} : { notification }),
             clearIfCurrent: () =>
               continuationPermit.withPermit(
@@ -7299,6 +7337,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         });
 
         const restartAcpRuntime = Effect.fnUntraced(function* (threadId: ThreadId | null) {
+          yield* stopPostSettleWakeWatcher;
+          const previousGeneration = yield* Ref.get(runtimeCallbackGeneration);
+          yield* runtimeCallbackPermit.withPermit(
+            quarantineNativeTransportAtGeneration(previousGeneration),
+          );
+          yield* advanceRuntimeCallbackGeneration;
           yield* spawnAcpRuntime(threadId);
           yield* wireAcpRuntimeHandlers(runtime, yield* Ref.get(runtimeCallbackGeneration));
         });
@@ -7480,12 +7524,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             threadId: ThreadId | null,
             candidate: AcpSessionRuntime.AcpSessionRuntimeStartResult,
           ) {
+            yield* stopPostSettleWakeWatcher;
             rememberTerminalEnvironment(candidate.sessionId, yield* readMcpContext(threadId));
             yield* Ref.set(runtimeRestartRequired, false);
             yield* Ref.set(activeSessionId, candidate.sessionId);
             yield* setActiveSessionSetup(candidate);
             yield* Ref.set(activeSelection, null);
             yield* Ref.set(activeInteractionMode, null);
+            yield* Ref.set(activeRuntimePolicy, null);
             yield* Ref.set(promptInstructionStates, new Map());
             yield* Ref.set(promptRuntimeInstructions, new Map());
             yield* Ref.set(compactionMarkers, new Map());
@@ -7880,6 +7926,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         );
         yield* Ref.set(activeSelection, input.modelSelection);
         yield* Ref.set(activeInteractionMode, input.runtimePolicy.interactionMode);
+        yield* Ref.set(activeRuntimePolicy, input.runtimePolicy);
         const createdAt = yield* DateTime.now;
         const providerSession: OrchestrationV2ProviderSession = {
           id: input.providerSessionId,
@@ -7990,6 +8037,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           );
         });
         const quarantineStoppedRun = Effect.fnUntraced(function* () {
+          yield* stopPostSettleWakeWatcher;
           yield* continuationPermit.withPermit(
             Effect.gen(function* () {
               yield* Ref.update(continuationGeneration, (value) => value + 1);
@@ -8203,6 +8251,29 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
           if (settledStatus !== "completed") {
             yield* Ref.set(midTurnUnreportedCompletedTaskIds, new Set());
+            yield* stopPostSettleWakeWatcher;
+          } else if (
+            !directStopQuarantine &&
+            continuationRequests !== undefined &&
+            flavor.watchPostSettleWake !== undefined
+          ) {
+            const sessionId = yield* Ref.get(activeSessionId);
+            if (sessionId !== null) {
+              yield* stopPostSettleWakeWatcher;
+              const fiber = yield* flavor
+                .watchPostSettleWake({
+                  sessionId,
+                  offerWake: (wakeOptions) =>
+                    offerContinuationRun(sessionId, {
+                      delivery: "message_text",
+                      ...wakeOptions,
+                    }),
+                })
+                .pipe(Effect.forkScoped, Effect.provideService(Scope.Scope, sessionScope));
+              yield* Ref.set(postSettleWakeFiber, fiber);
+            }
+          } else {
+            yield* stopPostSettleWakeWatcher;
           }
           yield* Deferred.succeed(context.completed, undefined).pipe(Effect.ignore);
         });
@@ -8484,6 +8555,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           yield* Ref.set(activeSessionSetup, null);
           yield* Ref.set(activeSelection, null);
           yield* Ref.set(activeInteractionMode, null);
+          yield* Ref.set(activeRuntimePolicy, null);
           // A failed prompt may have been dropped, so the fresh runtime sends T3's notes again.
           yield* Ref.set(promptInstructionStates, new Map());
           yield* Ref.set(promptRuntimeInstructions, new Map());
@@ -8504,9 +8576,20 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 reason: "previous_turn_active",
               });
             }
+            yield* stopPostSettleWakeWatcher;
             useProviderThreadIdentity(turnInput.providerThread);
             // load/resume can invoke client methods; install the incoming policy before activation.
+            const previousRuntimePolicy = yield* Ref.get(activeRuntimePolicy);
             latestRuntimePolicy = turnInput.runtimePolicy;
+            if (
+              previousRuntimePolicy !== null &&
+              flavor.requiresRuntimeRestartForPolicyChange?.(
+                previousRuntimePolicy,
+                turnInput.runtimePolicy,
+              ) === true
+            ) {
+              yield* Ref.set(runtimeRestartRequired, true);
+            }
             const requestedSessionId = yield* nativeThreadId(driver, turnInput.providerThread);
             const restartAfterInterrupt = yield* restartRuntimeAfterTeardownIfRequired(
               turnInput.threadId,
@@ -8520,13 +8603,18 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               yield* configureSession(activated, turnInput.modelSelection, turnInput.runtimePolicy);
               yield* Ref.set(activeSelection, turnInput.modelSelection);
               yield* Ref.set(activeInteractionMode, turnInput.runtimePolicy.interactionMode);
+              yield* Ref.set(activeRuntimePolicy, turnInput.runtimePolicy);
             } else {
               const configuredSelection = yield* Ref.get(activeSelection);
               const configuredInteractionMode = yield* Ref.get(activeInteractionMode);
+              const configuredRuntimePolicy = yield* Ref.get(activeRuntimePolicy);
               if (
                 configuredSelection === null ||
                 !modelSelectionsEqual(configuredSelection, turnInput.modelSelection) ||
-                configuredInteractionMode !== turnInput.runtimePolicy.interactionMode
+                configuredInteractionMode !== turnInput.runtimePolicy.interactionMode ||
+                configuredRuntimePolicy === null ||
+                configuredRuntimePolicy.runtimeMode !== turnInput.runtimePolicy.runtimeMode ||
+                configuredRuntimePolicy.maxRuntimeMode !== turnInput.runtimePolicy.maxRuntimeMode
               ) {
                 const currentSessionSetup = yield* Ref.get(activeSessionSetup);
                 if (currentSessionSetup === null) {
@@ -8542,6 +8630,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 );
                 yield* Ref.set(activeSelection, turnInput.modelSelection);
                 yield* Ref.set(activeInteractionMode, turnInput.runtimePolicy.interactionMode);
+                yield* Ref.set(activeRuntimePolicy, turnInput.runtimePolicy);
               }
             }
             // Checked after activation: a loaded session advertises its own commands.
@@ -9021,6 +9110,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
 
         yield* Effect.addFinalizer(() =>
           Effect.gen(function* () {
+            yield* stopPostSettleWakeWatcher;
             yield* continuationPermit.withPermit(
               Effect.gen(function* () {
                 yield* Ref.set(continuationClosed, true);
@@ -9093,7 +9183,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     : flavor.getModelContextWindow?.(selection, session);
                 },
               }),
-          ...(postSettleContinuationEnabled || followsAgentWorkState
+          ...(postSettleContinuationEnabled ||
+          followsAgentWorkState ||
+          (flavor.watchPostSettleWake !== undefined && continuationRequests !== undefined)
             ? {
                 hasPendingBackgroundWork: Effect.gen(function* () {
                   const rootSessionId = yield* Ref.get(activeSessionId);
@@ -9217,9 +9309,23 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   const restorePreviousItemIdentity = Effect.sync(() => {
                     itemIdentityVersion = previousItemIdentityVersion;
                   });
-                  const restartAfterInterrupt = yield* restartRuntimeAfterTeardownIfRequired(
-                    threadInput.providerThread.appThreadId,
-                  ).pipe(Effect.tapError(() => restorePreviousItemIdentity));
+                  const restartAfterInterrupt = yield* Effect.gen(function* () {
+                    const nextRuntimePolicy = threadInput.runtimePolicy ?? latestRuntimePolicy;
+                    const previousRuntimePolicy = yield* Ref.get(activeRuntimePolicy);
+                    latestRuntimePolicy = nextRuntimePolicy;
+                    if (
+                      previousRuntimePolicy !== null &&
+                      flavor.requiresRuntimeRestartForPolicyChange?.(
+                        previousRuntimePolicy,
+                        nextRuntimePolicy,
+                      ) === true
+                    ) {
+                      yield* Ref.set(runtimeRestartRequired, true);
+                    }
+                    return yield* restartRuntimeAfterTeardownIfRequired(
+                      threadInput.providerThread.appThreadId,
+                    );
+                  }).pipe(Effect.tapError(() => restorePreviousItemIdentity));
                   if ((yield* Ref.get(activeSessionId)) !== sessionId || restartAfterInterrupt) {
                     yield* Ref.set(snapshot, emptySnapshotState());
                     const activated = yield* activateSession(
@@ -9229,10 +9335,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     yield* Ref.set(activeSessionId, activated.sessionId);
                     yield* setActiveSessionSetup(activated);
                     const nextSelection = threadInput.modelSelection ?? input.modelSelection;
-                    const nextRuntimePolicy = threadInput.runtimePolicy ?? input.runtimePolicy;
+                    const nextRuntimePolicy = threadInput.runtimePolicy ?? latestRuntimePolicy;
                     yield* configureSession(activated, nextSelection, nextRuntimePolicy);
                     yield* Ref.set(activeSelection, nextSelection);
                     yield* Ref.set(activeInteractionMode, nextRuntimePolicy.interactionMode);
+                    yield* Ref.set(activeRuntimePolicy, nextRuntimePolicy);
                   }
                   const now = yield* DateTime.now;
                   return {
