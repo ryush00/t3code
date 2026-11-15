@@ -111,6 +111,23 @@ describe("Antigravity process environment", () => {
     });
   });
 
+  it("adds --dangerously-skip-permissions when skipPermissions is enabled", () => {
+    const fullAccessCli = buildAntigravityAcpSpawnInput({
+      installation: { executablePath: "/usr/bin/agy" },
+      profile,
+      cwd: "/project",
+      baseEnv: { PATH: "/usr/bin" },
+      skipPermissions: true,
+    });
+    expect(fullAccessCli.args).toEqual([
+      "acp",
+      "--gemini-dir",
+      profile.geminiHome,
+      "--app-data-dir",
+      "antigravity-acp",
+      "--dangerously-skip-permissions",
+    ]);
+  });
   it("passes only the configured method's credential and keeps the GCP pair out of the environment", () => {
     const baseEnv = { PATH: "/usr/bin", GOOGLE_API_KEY: "ambient-key" };
     const spawnFor = (auth: AntigravityAuthConfig) =>
