@@ -1,19 +1,11 @@
 name: Fork Desktop Release
 
+# Fork-only. Publishes the `fork` branch as a nightly prerelease; see FORK.md.
 on:
-  push:
-    tags:
-      - "v*.*.*"
   workflow_dispatch:
-    inputs:
-      version:
-        description: "Release version (for example 0.1.10)"
-        required: false
-        default: "0.1.10"
-        type: string
 
 concurrency:
-  group: fork-release-${{ github.ref_name }}
+  group: fork-release
   cancel-in-progress: false
 
 permissions:
@@ -43,35 +35,29 @@ jobs:
         with:
           sparse-checkout: |
             /.env.example
+            /apps/desktop/package.json
           sparse-checkout-cone-mode: false
 
       - id: meta
-        name: Resolve version and tag
+        name: Resolve nightly version and tag
         shell: bash
-        env:
-          INPUT_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
-            raw="${INPUT_VERSION:-0.1.10}"
-          else
-            raw="${GITHUB_REF_NAME}"
-          fi
-          version="${raw#v}"
-          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
-            echo "Invalid release version: $raw" >&2
+          # Same scheme as upstream nightlies: the next patch of the desktop
+          # package version, so a build sorts below the stable it previews.
+          current="$(sed -nE 's/^  "version": "([0-9]+\.[0-9]+\.[0-9]+).*$/\1/p' apps/desktop/package.json | head -n 1)"
+          if [[ ! "$current" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            echo "Could not read the desktop package version." >&2
             exit 1
           fi
+          base="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.$((BASH_REMATCH[3] + 1))"
+          version="${base}-nightly.$(date -u +%Y%m%d).${GITHUB_RUN_NUMBER}"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=v$version" >> "$GITHUB_OUTPUT"
-          echo "release_name=T3 Code v$version (Antigravity Background Wake Fix)" >> "$GITHUB_OUTPUT"
-          echo "release_channel=stable" >> "$GITHUB_OUTPUT"
+          echo "release_name=T3 Code Fork Nightly $version (${GITHUB_SHA:0:12})" >> "$GITHUB_OUTPUT"
+          echo "release_channel=nightly" >> "$GITHUB_OUTPUT"
           echo "ref=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
-          if [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
-          fi
+          echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
 
       - id: env_defaults
         name: Read public T3 Connect defaults
@@ -302,25 +288,23 @@ jobs:
 
       - name: Write release notes
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ needs.prepare.outputs.ref }}
         run: |
-          cat > release-notes.md <<'EOF'
-          ## 주요 수정 사항 (Antigravity Background Task / Timer / Subagent Wakeup Fix)
-
-          Upstream 이슈 [`pingdotgg/t3code#36105`](https://github.com/pingdotgg/t3code/issues/36105)에 대한 근본 수정이 적용된 **Windows (x64)** 및 **macOS (Apple Silicon arm64 / Intel x64)** 데스크톱 빌드입니다.
-
-          ### 해결된 문제
-          - **백그라운드 명령·타이머·서브에이전트 완료 후 세션 미재개 해결 (`AntigravityWakeWatcher`)**: `agy acp` (`1.5.6+`~`1.5.9`)가 백그라운드 작업 시작 직후 `end_turn`으로 프롬프트 스트림을 닫더라도, 네이티브 세션 DB(`<sessionId>.db`)의 `SYSTEM_MESSAGE`(`step_type = 101`) 웨이크업을 감지하여 자동으로 ACP 프롬프트 스트림을 재연결하고 후속 응답을 수신합니다.
-          - **실행 중인 백그라운드 도구의 조기 완료 표시 방지**: 비데몬 `run_command` 및 단발성 `schedule`이 백그라운드 전환 시 `running` 상태를 유지하며, 실제 종료 시 원래 명령 카드에 출력(`combinedOutput`)과 종료 코드(`exitCode`)가 정확히 반영됩니다.
-          - **`Full access` 권한 모드 네이티브 CLI 동기화**: `agy acp` 실행 시 `--dangerously-skip-permissions`를 전달하고 런타임 모드 전환 시 프로세스를 안전하게 재시작하여, 프롬프트 스트림 분리 중에도 웨이크업 도구가 `Tool confirmation (WAITING)` 상태에서 멈추지 않습니다.
-          - **정식 빌드 및 T3 Connect 완벽 호환**: 프로토콜 버전(`ORCHESTRATION_PROTOCOL_VERSION = "2"`) 및 공개 T3 Connect 설정이 정식 빌드와 100% 동일하여 원격 리눅스 서버, 모바일 앱, `app.t3.codes`와 그대로 연동됩니다.
-
-          ### 설치 안내
-          - **Windows (x64)**: `T3-Code-*-x64.exe` 설치 파일 실행 (WSL 백엔드 런타임 내장)
-          - **macOS (Apple Silicon / Intel)**: 본인 맥 아키텍처에 맞는 `.dmg` 설치 후, Apple 개발자 공증이 없는 커스텀 빌드이므로 최초 실행 전 터미널에서 아래 명령어를 한 번 실행하세요:
-            ```sh
-            xattr -cr "/Applications/T3 Code.app"
-            ```
-          EOF
+          set -euo pipefail
+          {
+            echo "Nightly build of the \`fork\` branch: upstream \`pingdotgg/t3code\` main plus the patches below."
+            echo
+            echo "### Fork patches"
+            gh api "repos/${GITHUB_REPOSITORY}/compare/main...${RELEASE_SHA}" \
+              --jq '.commits[] | "- " + (.commit.message | split("\n")[0]) + " (" + .sha[0:9] + ")"'
+            echo
+            echo "### Install"
+            echo "- Windows and Linux installs on the Nightly update channel update themselves."
+            echo "- macOS builds are not notarized. Install the \`.dmg\` for your architecture, then run \`xattr -cr \"/Applications/T3 Code (Nightly).app\"\` once."
+          } > release-notes.md
+          cat release-notes.md
 
       - name: Verify required Windows and macOS release assets
         shell: bash
