@@ -2563,12 +2563,19 @@ describe("AcpAdapterV2", () => {
   );
 
   it.live.each([
-    { modeIds: "plain", environment: {}, planModeId: "architect", buildModeId: "ask" },
+    {
+      modeIds: "plain",
+      environment: {},
+      planModeId: "architect",
+      buildModeId: "ask",
+      autoModeId: "code",
+    },
     {
       modeIds: "Copilot URL",
       environment: { T3_ACP_COPILOT_MODES: "1" },
       planModeId: "https://agentclientprotocol.com/protocol/session-modes#plan",
       buildModeId: "https://agentclientprotocol.com/protocol/session-modes#agent",
+      autoModeId: "https://agentclientprotocol.com/protocol/session-modes#autopilot",
     },
     {
       // Without a `mode` category, T3 derives no mode state and only the config option switches.
@@ -2576,10 +2583,11 @@ describe("AcpAdapterV2", () => {
       environment: { T3_ACP_COPILOT_MODES: "1", T3_ACP_MODE_OPTION_CATEGORY: "collaboration_mode" },
       planModeId: "https://agentclientprotocol.com/protocol/session-modes#plan",
       buildModeId: "https://agentclientprotocol.com/protocol/session-modes#agent",
+      autoModeId: "https://agentclientprotocol.com/protocol/session-modes#autopilot",
     },
   ])(
-    "refreshes ACP prompt instructions and native mode when the interaction mode changes ($modeIds mode ids)",
-    ({ environment, planModeId, buildModeId }) =>
+    "refreshes ACP prompt instructions and native mode when the interaction or permission mode changes ($modeIds mode ids)",
+    ({ environment, planModeId, buildModeId, autoModeId }) =>
       Effect.gen(function* () {
         const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const selfInvocation = yield* resolveSelfInvocation();
@@ -2607,12 +2615,24 @@ describe("AcpAdapterV2", () => {
               protocolEvents,
               environment,
             }),
+            // Full access names no mode, so the agent's advertised default stands.
+            sessionModeForPolicy: ({ runtimeMode, sandboxPolicy }) =>
+              sandboxPolicy !== undefined
+                ? buildModeId
+                : runtimeMode === "auto"
+                  ? autoModeId
+                  : runtimeMode === "approval-required"
+                    ? buildModeId
+                    : undefined,
           },
           selfInvocation,
         });
-        const policy = (interactionMode: "default" | "plan") =>
+        const policy = (
+          interactionMode: "default" | "plan",
+          runtimeMode: "full-access" | "auto" | "approval-required" = "full-access",
+        ) =>
           ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-            runtimeMode: "full-access",
+            runtimeMode,
             interactionMode,
             cwd: process.cwd(),
           });
@@ -2716,12 +2736,30 @@ describe("AcpAdapterV2", () => {
           [buildModeId],
           "Build should restore the native mode that T3 temporarily replaced for Plan",
         );
-        const switchedModel = yield* runTurn(7, defaultPolicy, "Switch models.", {
-          instanceId,
-          model: "composer-2",
-        });
+        const composer = { instanceId, model: "composer-2" } as const;
+        const switchedModel = yield* runTurn(7, defaultPolicy, "Switch models.", composer);
         assert.equal(switchedModel.textBlockCount, 2);
         assert.include(switchedModel.prompt, "as composer-2");
+
+        const auto = policy("default", "auto");
+        const restricted = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          ...auto,
+          sandboxPolicy: { type: "readOnly" },
+        });
+        assert.deepEqual((yield* runTurn(8, auto, "Continue.", composer)).modeSets, [autoModeId]);
+        assert.deepEqual((yield* runTurn(9, restricted, "Continue.", composer)).modeSets, [
+          buildModeId,
+        ]);
+        yield* runTurn(10, auto, "Continue.", composer);
+        yield* runTurn(11, policy("plan", "auto"), "Plan.", composer);
+        const afterPlan = yield* runTurn(
+          12,
+          policy("default", "approval-required"),
+          "Build.",
+          composer,
+        );
+        assert.notInclude(afterPlan.methods, "session/new");
+        assert.deepEqual(afterPlan.modeSets, [buildModeId]);
       }).pipe(Effect.provide(layerTest)),
   );
 
