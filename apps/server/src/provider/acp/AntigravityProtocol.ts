@@ -38,6 +38,12 @@ const NativeToolFields = Schema.Struct({
   exitCode: Schema.optional(Schema.Int),
   exit_code: Schema.optional(Schema.Int),
   imagePath: Schema.optional(Schema.String),
+  IsDaemon: Schema.optional(Schema.Boolean),
+  isDaemon: Schema.optional(Schema.Boolean),
+  is_daemon: Schema.optional(Schema.Boolean),
+  DurationSeconds: Schema.optional(Schema.Number),
+  durationSeconds: Schema.optional(Schema.Number),
+  duration_seconds: Schema.optional(Schema.Number),
 });
 const decodeNativeToolFields = Schema.decodeUnknownOption(NativeToolFields);
 const decodeSingleAnswer = Schema.decodeUnknownOption(
@@ -411,6 +417,50 @@ function withAntigravityEditPatches(
   });
 }
 
+const ANTIGRAVITY_BACKGROUND_TASK_MARKER =
+  /Tool is running as a background task with task id:\s*([^\s\r\n]+)/i;
+const ANTIGRAVITY_BACKGROUND_COMPLETION_MARKER = /\b(?:Completed At:|Command exited with code)\b/i;
+const ANTIGRAVITY_SCHEDULE_TOOL_TITLE = /^(?:Running|Run)\s+schedule\b/i;
+
+function collectAntigravityToolOutputTexts(
+  rawOutput: unknown,
+  nativeOutput: string | undefined,
+  content: unknown,
+): ReadonlyArray<string> {
+  const texts: string[] = [];
+  if (typeof rawOutput === "string") texts.push(rawOutput);
+  if (nativeOutput !== undefined) texts.push(nativeOutput);
+  if (Array.isArray(content)) {
+    for (const entry of content) {
+      if (!Predicate.isObject(entry)) continue;
+      if (typeof entry.text === "string") {
+        texts.push(entry.text);
+      } else if (Predicate.isObject(entry.content) && typeof entry.content.text === "string") {
+        texts.push(entry.content.text);
+      }
+    }
+  }
+  return texts;
+}
+
+function isAntigravityDaemonTool(
+  input: Schema.Schema.Type<typeof NativeToolFields> | undefined,
+): boolean {
+  return input?.IsDaemon === true || input?.isDaemon === true || input?.is_daemon === true;
+}
+
+function isAntigravityScheduleTimer(
+  toolCall: AcpToolCallState,
+  input: Schema.Schema.Type<typeof NativeToolFields> | undefined,
+): boolean {
+  return (
+    input?.DurationSeconds !== undefined ||
+    input?.durationSeconds !== undefined ||
+    input?.duration_seconds !== undefined ||
+    (typeof toolCall.title === "string" && ANTIGRAVITY_SCHEDULE_TOOL_TITLE.test(toolCall.title))
+  );
+}
+
 export function normalizeAntigravityToolCall(
   toolCall: AcpToolCallState,
   readPreEditFile = readAntigravityPreEditFile,
@@ -442,6 +492,37 @@ export function normalizeAntigravityToolCall(
   const sanitizedData = sanitizeAntigravityToolPayload(toolCall.data);
   const data: Record<string, unknown> = Predicate.isObject(sanitizedData) ? sanitizedData : {};
   const kind = toolCall.kind ?? (command !== undefined ? "execute" : undefined);
+  const isDaemon = isAntigravityDaemonTool(input);
+  const outputTexts = collectAntigravityToolOutputTexts(
+    toolCall.data.rawOutput,
+    nativeOutput,
+    toolCall.data.content,
+  );
+  const hasBackgroundMarker = outputTexts.some((text) =>
+    ANTIGRAVITY_BACKGROUND_TASK_MARKER.test(text),
+  );
+  const hasCompletionEvidence =
+    exitCode !== undefined ||
+    outputTexts.some((text) => ANTIGRAVITY_BACKGROUND_COMPLETION_MARKER.test(text));
+  const rememberedBackgroundTaskId =
+    typeof toolCall.data.antigravityBackgroundTaskId === "string"
+      ? toolCall.data.antigravityBackgroundTaskId
+      : undefined;
+  const status =
+    !isDaemon && hasBackgroundMarker && !hasCompletionEvidence && toolCall.status === "completed"
+      ? ("inProgress" as const)
+      : toolCall.status;
+  const backgroundTaskId = isDaemon
+    ? undefined
+    : (rememberedBackgroundTaskId ??
+      (hasBackgroundMarker ||
+      ((kind === "execute" || isAntigravityScheduleTimer(toolCall, input)) &&
+        (status === "pending" || status === "inProgress"))
+        ? `antigravity-bg:${toolCall.toolCallId}`
+        : undefined));
+  if (backgroundTaskId !== undefined) {
+    data.antigravityBackgroundTaskId = backgroundTaskId;
+  }
   if (kind !== undefined) data.kind = kind;
   if (command !== undefined) data.command = command;
   if (cwd !== undefined) data.cwd = cwd;
@@ -468,6 +549,7 @@ export function normalizeAntigravityToolCall(
   }
   return {
     ...toolCall,
+    ...(status !== undefined ? { status } : {}),
     ...(kind !== undefined ? { kind } : {}),
     ...(command !== undefined ? { command } : {}),
     ...(toolCall.title !== undefined ? { title: boundText(toolCall.title) } : {}),
@@ -478,6 +560,44 @@ export function normalizeAntigravityToolCall(
         : {}),
     data,
   };
+}
+
+export function extractAntigravityBackgroundTaskId(toolCall: AcpToolCallState): string | undefined {
+  const input = Option.getOrUndefined(decodeNativeToolFields(toolCall.data.rawInput));
+  if (isAntigravityDaemonTool(input)) return undefined;
+  if (typeof toolCall.data.antigravityBackgroundTaskId === "string") {
+    return toolCall.data.antigravityBackgroundTaskId;
+  }
+  const output = Option.getOrUndefined(decodeNativeToolFields(toolCall.data.rawOutput));
+  const nativeOutput = output?.combinedOutput ?? output?.combined_output;
+  const outputTexts = collectAntigravityToolOutputTexts(
+    toolCall.data.rawOutput,
+    nativeOutput,
+    toolCall.data.content,
+  );
+  if (outputTexts.some((text) => ANTIGRAVITY_BACKGROUND_TASK_MARKER.test(text))) {
+    return `antigravity-bg:${toolCall.toolCallId}`;
+  }
+  const hasCommand =
+    (input?.CommandLine ??
+      input?.command_line ??
+      input?.commandLine ??
+      input?.command ??
+      output?.commandLine ??
+      output?.command_line ??
+      toolCall.command) !== undefined;
+  const kind = toolCall.kind ?? (hasCommand ? "execute" : undefined);
+  if (
+    (kind === "execute" || isAntigravityScheduleTimer(toolCall, input)) &&
+    (toolCall.status === "pending" || toolCall.status === "inProgress")
+  ) {
+    return `antigravity-bg:${toolCall.toolCallId}`;
+  }
+  return undefined;
+}
+
+export function isAntigravityBackgroundCommandTool(toolCall: AcpToolCallState): boolean {
+  return extractAntigravityBackgroundTaskId(toolCall) !== undefined;
 }
 
 const ANTIGRAVITY_SUBAGENT_TITLES = new Set([
