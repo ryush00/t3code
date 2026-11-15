@@ -1,0 +1,359 @@
+name: Fork Desktop Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (for example 0.1.10)"
+        required: false
+        default: "0.1.10"
+        type: string
+
+concurrency:
+  group: fork-release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  prepare:
+    name: Prepare release metadata
+    if: github.repository != 'pingdotgg/t3code'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      tag: ${{ steps.meta.outputs.tag }}
+      release_name: ${{ steps.meta.outputs.release_name }}
+      release_channel: ${{ steps.meta.outputs.release_channel }}
+      is_prerelease: ${{ steps.meta.outputs.is_prerelease }}
+      ref: ${{ steps.meta.outputs.ref }}
+      clerk_publishable_key: ${{ steps.env_defaults.outputs.clerk_publishable_key }}
+      clerk_jwt_template: ${{ steps.env_defaults.outputs.clerk_jwt_template }}
+      clerk_cli_oauth_client_id: ${{ steps.env_defaults.outputs.clerk_cli_oauth_client_id }}
+      relay_url: ${{ steps.env_defaults.outputs.relay_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          sparse-checkout: |
+            /.env.example
+          sparse-checkout-cone-mode: false
+
+      - id: meta
+        name: Resolve version and tag
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            raw="${INPUT_VERSION:-0.1.10}"
+          else
+            raw="${GITHUB_REF_NAME}"
+          fi
+          version="${raw#v}"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid release version: $raw" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          echo "release_name=T3 Code v$version (Antigravity Background Wake Fix)" >> "$GITHUB_OUTPUT"
+          echo "release_channel=stable" >> "$GITHUB_OUTPUT"
+          echo "ref=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+          if [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - id: env_defaults
+        name: Read public T3 Connect defaults
+        shell: bash
+        run: |
+          set -euo pipefail
+          read_var() {
+            sed -nE "s/^$1=(.+)$/\1/p" .env.example | head -n 1
+          }
+          echo "clerk_publishable_key=$(read_var T3CODE_CLERK_PUBLISHABLE_KEY)" >> "$GITHUB_OUTPUT"
+          echo "clerk_jwt_template=$(read_var T3CODE_CLERK_JWT_TEMPLATE)" >> "$GITHUB_OUTPUT"
+          echo "clerk_cli_oauth_client_id=$(read_var T3CODE_CLERK_CLI_OAUTH_CLIENT_ID)" >> "$GITHUB_OUTPUT"
+          echo "relay_url=$(read_var T3CODE_RELAY_URL)" >> "$GITHUB_OUTPUT"
+
+  build_bundle:
+    name: Build JS bundle
+    needs: [prepare]
+    if: ${{ !cancelled() && needs.prepare.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      T3CODE_CLERK_PUBLISHABLE_KEY: ${{ needs.prepare.outputs.clerk_publishable_key }}
+      T3CODE_CLERK_JWT_TEMPLATE: ${{ needs.prepare.outputs.clerk_jwt_template }}
+      T3CODE_CLERK_CLI_OAUTH_CLIENT_ID: ${{ needs.prepare.outputs.clerk_cli_oauth_client_id }}
+      T3CODE_RELAY_URL: ${{ needs.prepare.outputs.relay_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ needs.prepare.outputs.ref }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup dependencies
+        uses: ./.github/actions/setup-ci-deps
+        with:
+          install-args: --filter=t3... --filter=@t3tools/web... --filter=@t3tools/desktop... --filter=@t3tools/scripts...
+        env:
+          pnpm_config_cache_dir: ${{ runner.temp }}/pnpm-metadata
+
+      - name: Align package versions to release version
+        run: node scripts/update-release-package-versions.ts "${{ needs.prepare.outputs.version }}"
+
+      - name: Build JS bundle
+        env:
+          T3CODE_TELEMETRY_CHANNEL: dev
+        run: vp run build:desktop:bundle
+
+      - name: Upload JS bundle
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: js-bundle
+          path: |
+            apps/server/dist
+            apps/desktop/dist-electron
+          if-no-files-found: error
+          retention-days: 1
+
+  desktop_mac_arm64:
+    name: Desktop macOS arm64
+    needs: [prepare, build_bundle]
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.build_bundle.result == 'success' }}
+    uses: ./.github/workflows/release-desktop.yml
+    secrets: inherit
+    with:
+      version: ${{ needs.prepare.outputs.version }}
+      ref: ${{ needs.prepare.outputs.ref }}
+      release_channel: ${{ needs.prepare.outputs.release_channel }}
+      relay_client_tracing: false
+      clerk_publishable_key: ${{ needs.prepare.outputs.clerk_publishable_key }}
+      clerk_jwt_template: ${{ needs.prepare.outputs.clerk_jwt_template }}
+      clerk_cli_oauth_client_id: ${{ needs.prepare.outputs.clerk_cli_oauth_client_id }}
+      relay_url: ${{ needs.prepare.outputs.relay_url }}
+      label: macOS arm64
+      runner: macos-15
+      platform: mac
+      target: dmg
+      arch: arm64
+      rust_target: aarch64-apple-darwin
+      resource_key: darwin-arm64
+      cli_archive: true
+      launch_check: true
+      save_pnpm_store: false
+
+  desktop_mac_x64:
+    name: Desktop macOS x64
+    needs: [prepare, build_bundle]
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.build_bundle.result == 'success' }}
+    uses: ./.github/workflows/release-desktop.yml
+    secrets: inherit
+    with:
+      version: ${{ needs.prepare.outputs.version }}
+      ref: ${{ needs.prepare.outputs.ref }}
+      release_channel: ${{ needs.prepare.outputs.release_channel }}
+      relay_client_tracing: false
+      clerk_publishable_key: ${{ needs.prepare.outputs.clerk_publishable_key }}
+      clerk_jwt_template: ${{ needs.prepare.outputs.clerk_jwt_template }}
+      clerk_cli_oauth_client_id: ${{ needs.prepare.outputs.clerk_cli_oauth_client_id }}
+      relay_url: ${{ needs.prepare.outputs.relay_url }}
+      label: macOS x64
+      runner: macos-15
+      platform: mac
+      target: dmg
+      arch: x64
+      rust_target: x86_64-apple-darwin
+      resource_key: darwin-x64
+      cli_archive: false
+
+  desktop_linux_x64:
+    name: Desktop Linux x64
+    needs: [prepare, build_bundle]
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.build_bundle.result == 'success' }}
+    uses: ./.github/workflows/release-desktop.yml
+    secrets: inherit
+    with:
+      version: ${{ needs.prepare.outputs.version }}
+      ref: ${{ needs.prepare.outputs.ref }}
+      release_channel: ${{ needs.prepare.outputs.release_channel }}
+      relay_client_tracing: false
+      clerk_publishable_key: ${{ needs.prepare.outputs.clerk_publishable_key }}
+      clerk_jwt_template: ${{ needs.prepare.outputs.clerk_jwt_template }}
+      clerk_cli_oauth_client_id: ${{ needs.prepare.outputs.clerk_cli_oauth_client_id }}
+      relay_url: ${{ needs.prepare.outputs.relay_url }}
+      label: Linux x64
+      runner: ubuntu-24.04
+      platform: linux
+      target: AppImage
+      arch: x64
+      rust_target: x86_64-unknown-linux-gnu
+      resource_key: linux-x64
+      cli_archive: true
+      launch_check: true
+
+  desktop_win_x64:
+    name: Desktop Windows x64
+    needs: [prepare, build_bundle]
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.build_bundle.result == 'success' }}
+    uses: ./.github/workflows/release-desktop.yml
+    secrets: inherit
+    with:
+      version: ${{ needs.prepare.outputs.version }}
+      ref: ${{ needs.prepare.outputs.ref }}
+      release_channel: ${{ needs.prepare.outputs.release_channel }}
+      relay_client_tracing: false
+      clerk_publishable_key: ${{ needs.prepare.outputs.clerk_publishable_key }}
+      clerk_jwt_template: ${{ needs.prepare.outputs.clerk_jwt_template }}
+      clerk_cli_oauth_client_id: ${{ needs.prepare.outputs.clerk_cli_oauth_client_id }}
+      relay_url: ${{ needs.prepare.outputs.relay_url }}
+      label: Windows x64
+      runner: ubuntu-24.04
+      verify_runner: windows-2025
+      platform: win
+      target: nsis
+      arch: x64
+      rust_target: x86_64-pc-windows-msvc
+      resource_key: win32-x64
+      cli_archive: true
+
+  publish:
+    name: Publish GitHub Release
+    needs: [prepare, desktop_mac_arm64, desktop_mac_x64, desktop_linux_x64, desktop_win_x64]
+    if: ${{ !failure() && !cancelled() && needs.prepare.result == 'success' && needs.desktop_mac_arm64.result == 'success' && needs.desktop_mac_x64.result == 'success' && needs.desktop_linux_x64.result == 'success' && needs.desktop_win_x64.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ needs.prepare.outputs.ref }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup dependencies
+        uses: ./.github/actions/setup-ci-deps
+        with:
+          install-args: --filter=@t3tools/scripts...
+
+      - name: Download all desktop artifacts
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: desktop-*
+          merge-multiple: true
+          path: release-assets
+
+      - name: Download all CLI archives
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: cli-*
+          merge-multiple: true
+          path: release-assets
+
+      - name: Write CLI archive checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release-assets
+          shopt -s nullglob
+          archives=(t3-*.tar.gz t3-*.zip)
+          if [[ ${#archives[@]} -eq 0 ]]; then
+            echo "No CLI archives were produced." >&2
+            exit 1
+          fi
+          sha256sum "${archives[@]}" > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Normalize desktop updater manifests
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          rm -f release-assets/builder-debug.yml
+          for secondary in release-assets/*-mac-x64.yml; do
+            primary="${secondary%-x64.yml}.yml"
+            if [[ -f "$primary" ]]; then
+              node scripts/merge-update-manifests.ts --platform mac "$primary" "$secondary"
+              rm -f "$secondary"
+            fi
+          done
+          for win_manifest in release-assets/*-win-x64.yml; do
+            mv "$win_manifest" "${win_manifest%-win-x64.yml}.yml"
+          done
+
+      - name: Write release notes
+        shell: bash
+        run: |
+          cat > release-notes.md <<'EOF'
+          ## 주요 수정 사항 (Antigravity Background Task / Timer / Subagent Wakeup Fix)
+
+          Upstream 이슈 [`pingdotgg/t3code#36105`](https://github.com/pingdotgg/t3code/issues/36105)에 대한 근본 수정이 적용된 **Windows (x64)** 및 **macOS (Apple Silicon arm64 / Intel x64)** 데스크톱 빌드입니다.
+
+          ### 해결된 문제
+          - **백그라운드 명령·타이머·서브에이전트 완료 후 세션 미재개 해결 (`AntigravityWakeWatcher`)**: `agy acp` (`1.5.6+`~`1.5.9`)가 백그라운드 작업 시작 직후 `end_turn`으로 프롬프트 스트림을 닫더라도, 네이티브 세션 DB(`<sessionId>.db`)의 `SYSTEM_MESSAGE`(`step_type = 101`) 웨이크업을 감지하여 자동으로 ACP 프롬프트 스트림을 재연결하고 후속 응답을 수신합니다.
+          - **실행 중인 백그라운드 도구의 조기 완료 표시 방지**: 비데몬 `run_command` 및 단발성 `schedule`이 백그라운드 전환 시 `running` 상태를 유지하며, 실제 종료 시 원래 명령 카드에 출력(`combinedOutput`)과 종료 코드(`exitCode`)가 정확히 반영됩니다.
+          - **`Full access` 권한 모드 네이티브 CLI 동기화**: `agy acp` 실행 시 `--dangerously-skip-permissions`를 전달하고 런타임 모드 전환 시 프로세스를 안전하게 재시작하여, 프롬프트 스트림 분리 중에도 웨이크업 도구가 `Tool confirmation (WAITING)` 상태에서 멈추지 않습니다.
+          - **정식 빌드 및 T3 Connect 완벽 호환**: 프로토콜 버전(`ORCHESTRATION_PROTOCOL_VERSION = "2"`) 및 공개 T3 Connect 설정이 정식 빌드와 100% 동일하여 원격 리눅스 서버, 모바일 앱, `app.t3.codes`와 그대로 연동됩니다.
+
+          ### 설치 안내
+          - **Windows (x64)**: `T3-Code-*-x64.exe` 설치 파일 실행 (WSL 백엔드 런타임 내장)
+          - **macOS (Apple Silicon / Intel)**: 본인 맥 아키텍처에 맞는 `.dmg` 설치 후, Apple 개발자 공증이 없는 커스텀 빌드이므로 최초 실행 전 터미널에서 아래 명령어를 한 번 실행하세요:
+            ```sh
+            xattr -cr "/Applications/T3 Code.app"
+            ```
+          EOF
+
+      - name: Verify required Windows and macOS release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          dmgs=(release-assets/*.dmg)
+          exes=(release-assets/*.exe)
+          zips=(release-assets/*.zip)
+          ls -lh release-assets/
+          if [[ ${#dmgs[@]} -lt 2 ]]; then
+            echo "Expected both arm64 and x64 macOS DMGs, found: ${dmgs[*]:-none}" >&2
+            exit 1
+          fi
+          if [[ ${#exes[@]} -lt 1 ]]; then
+            echo "Expected Windows NSIS installer (.exe), found none" >&2
+            exit 1
+          fi
+          if [[ ${#zips[@]} -lt 2 || ! -f release-assets/SHA256SUMS ]]; then
+            echo "Expected macOS/Windows ZIP archives and SHA256SUMS" >&2
+            exit 1
+          fi
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
+        with:
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          target_commitish: ${{ needs.prepare.outputs.ref }}
+          name: ${{ needs.prepare.outputs.release_name }}
+          body_path: release-notes.md
+          prerelease: ${{ needs.prepare.outputs.is_prerelease }}
+          draft: false
+          make_latest: ${{ needs.prepare.outputs.is_prerelease == 'false' }}
+          files: release-assets/*
+          fail_on_unmatched_files: true
+          token: ${{ github.token }}
