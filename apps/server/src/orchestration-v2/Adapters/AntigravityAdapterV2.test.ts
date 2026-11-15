@@ -1,3 +1,5 @@
+import * as NodeSqlite from "node:sqlite";
+
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
@@ -23,18 +25,22 @@ import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/process";
 import type * as EffectAcpSchema from "effect-acp/compat";
 import * as EffectAcpErrors from "effect-acp/errors";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import { makeAntigravityAcpRuntime } from "../../provider/acp/AntigravityAcpSupport.ts";
 import { normalizeAntigravitySessionUpdate } from "../../provider/acp/AntigravityProtocol.ts";
+import { ANTIGRAVITY_WAKE_CONTINUATION_PROMPT } from "../../provider/acp/AntigravityWakeWatcher.ts";
 import { ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE } from "../../provider/antigravityAuthSupport.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -1272,5 +1278,327 @@ describe("AntigravityAdapterV2 session system prompt", () => {
           assert.include(sent, "<pull_request_linking>");
         }
       }).pipe(Effect.provide(layerSession)),
+  );
+});
+
+describe("AntigravityAdapterV2 post-settle wake and full-access restart", () => {
+  it.effect(
+    "reattaches post-turn background wakes onto the original command card and restarts across full-access",
+    () =>
+      Effect.gen(function* () {
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const crypto = yield* SecureRandom.SecureRandom;
+        const continuationRequests =
+          yield* ProviderContinuationRequests.ProviderContinuationRequests;
+        const mockAgentPath = yield* path.fromFileUrl(
+          new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+        );
+        const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-ag-wake-ws-" });
+        const profileDirectory = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-ag-wake-home-",
+        });
+        const conversations = path.join(profileDirectory, "antigravity-acp", "conversations");
+        yield* fileSystem.makeDirectory(conversations, { recursive: true });
+        const dbPath = path.join(conversations, "mock-session-1.db");
+
+        let nextStepIdx = 0;
+        const appendSteps = (steps: ReadonlyArray<readonly [number, number]>) => {
+          const database = new NodeSqlite.DatabaseSync(dbPath);
+          try {
+            database.exec(
+              "CREATE TABLE IF NOT EXISTS steps (idx INTEGER PRIMARY KEY, step_type INTEGER, status INTEGER)",
+            );
+            const insert = database.prepare("INSERT INTO steps VALUES (?, ?, ?)");
+            for (const [stepType, status] of steps) {
+              insert.run(nextStepIdx++, stepType, status);
+            }
+          } finally {
+            database.close();
+          }
+        };
+
+        type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+        let sessionUpdate: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
+        const spawnedRuntimeModes: Array<string | undefined> = [];
+        const sentPrompts: Array<string> = [];
+        let promptOrdinal = 0;
+        const pollWaiting = yield* Queue.unbounded<void>();
+
+        const instanceId = ProviderInstanceId.make("antigravity-wake-test");
+        const threadId = ThreadId.make("thread-antigravity-wake");
+        const adapter = yield* makeAntigravityAdapterV2({
+          instanceId,
+          selfInvocation: yield* resolveSelfInvocation(),
+          continuationRequests,
+          profileDirectory,
+          wakeWatcherOptions: {
+            pollInterval: "400 millis",
+            settleGrace: "0 millis",
+            onPollWait: () => Queue.offer(pollWaiting, undefined).pipe(Effect.asVoid),
+          },
+          makeRuntime: (input) =>
+            Effect.sync(() => {
+              spawnedRuntimeModes.push(input.runtimePolicy?.runtimeMode);
+            }).pipe(
+              Effect.andThen(
+                makeAntigravityAcpRuntime({
+                  ...input,
+                  childProcessSpawner,
+                  spawn: {
+                    command: process.execPath,
+                    args: [mockAgentPath],
+                    cwd: input.cwd,
+                    env: { T3_ACP_ANTIGRAVITY: "1", T3_ACP_AGENT_VERSION: "1.5.9" },
+                  },
+                }),
+              ),
+              Effect.provideService(SecureRandom.SecureRandom, crypto),
+              Effect.map((runtime): RuntimeService => ({
+                ...runtime,
+                handleSessionUpdate: (handler) =>
+                  Effect.sync(() => {
+                    sessionUpdate = handler;
+                  }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+                prompt: (request) =>
+                  Effect.gen(function* () {
+                    promptOrdinal += 1;
+                    sentPrompts.push(JSON.stringify(request.prompt));
+                    const send = (update: EffectAcpSchema.SessionUpdate) =>
+                      sessionUpdate === undefined
+                        ? Effect.die("the adapter must handle session updates")
+                        : sessionUpdate(
+                            normalizeAntigravitySessionUpdate({
+                              sessionId: "mock-session-1",
+                              update,
+                            }),
+                          );
+                    if (promptOrdinal === 1) {
+                      appendSteps([[14, 3]]);
+                      yield* send({
+                        sessionUpdate: "tool_call",
+                        toolCallId: "bg-cmd-1",
+                        title: "run_command",
+                        kind: "execute",
+                        status: "in_progress",
+                        rawInput: {
+                          CommandLine: "sleep 3 && echo WAKE_DONE",
+                          Cwd: workspace,
+                          WaitMsBeforeAsync: 500,
+                        },
+                      });
+                      yield* send({
+                        sessionUpdate: "tool_call_update",
+                        toolCallId: "bg-cmd-1",
+                        status: "completed",
+                        rawOutput:
+                          "Tool is running as a background task with task id: conv-1/task-0\n",
+                      });
+                      yield* send({
+                        sessionUpdate: "agent_message_chunk",
+                        content: { type: "text", text: "Started background task." },
+                      });
+                      appendSteps([[15, 3]]);
+                      return { stopReason: "end_turn" as const };
+                    }
+                    if (promptOrdinal === 2) {
+                      yield* send({
+                        sessionUpdate: "tool_call_update",
+                        toolCallId: "bg-cmd-1",
+                        status: "completed",
+                        rawOutput: {
+                          commandLine: "sleep 3 && echo WAKE_DONE",
+                          workingDir: workspace,
+                          combinedOutput: "WAKE_DONE\n",
+                          exitCode: 0,
+                        },
+                      });
+                      yield* send({
+                        sessionUpdate: "agent_message_chunk",
+                        content: { type: "text", text: "Background command finished: WAKE_DONE." },
+                      });
+                      appendSteps([[15, 3]]);
+                      return { stopReason: "end_turn" as const };
+                    }
+                    yield* send({
+                      sessionUpdate: "agent_message_chunk",
+                      content: { type: "text", text: "Switched to full-access." },
+                    });
+                    appendSteps([
+                      [14, 3],
+                      [15, 3],
+                    ]);
+                    return { stopReason: "end_turn" as const };
+                  }),
+              })),
+            ),
+          withProcess: (_stop, task) => task,
+          defaultModel: Effect.undefined,
+        });
+
+        const policyFor = (runtimeMode: "approval-required" | "full-access") =>
+          ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+            runtimeMode,
+            interactionMode: "default",
+            cwd: workspace,
+          });
+        const modelSelection = { instanceId, model: "gemini-test-low" } as const;
+        const session = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-antigravity-wake"),
+          modelSelection,
+          runtimePolicy: policyFor("approval-required"),
+        });
+        const providerThread = yield* session.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy: policyFor("approval-required"),
+        });
+        const now = yield* DateTime.now;
+        const makeAppThread = (runtimeMode: "approval-required" | "full-access") => ({
+          createdBy: "user" as const,
+          creationSource: "web" as const,
+          id: threadId,
+          projectId: ProjectId.make("project-antigravity-wake"),
+          title: "Antigravity wake",
+          providerInstanceId: instanceId,
+          modelSelection,
+          runtimeMode,
+          interactionMode: "default" as const,
+          branch: null,
+          worktreePath: workspace,
+          activeProviderThreadId: providerThread.id,
+          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        });
+
+        // Turn 1 starts a detached background command and settles with `end_turn`.
+        yield* session.startTurn({
+          appThread: makeAppThread("approval-required"),
+          threadId,
+          runId: RunId.make("run-ag-wake-1"),
+          runOrdinal: 1,
+          providerTurnOrdinal: 1,
+          attemptId: RunAttemptId.make("attempt-ag-wake-1"),
+          rootNodeId: NodeId.make("node-ag-wake-1"),
+          providerThread,
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: MessageId.make("msg-ag-wake-1"),
+            text: "run background probe",
+            attachments: [],
+          },
+          modelSelection,
+          runtimePolicy: policyFor("approval-required"),
+        });
+        const turn1Events = Array.from(
+          yield* session.events.pipe(
+            Stream.takeUntil((event) => event.type === "turn.terminal"),
+            Stream.runCollect,
+          ),
+        );
+        const turn1Cmd = turn1Events.findLast(
+          (event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "command_execution",
+        );
+        assert.isDefined(turn1Cmd);
+        if (
+          turn1Cmd?.type === "turn_item.updated" &&
+          turn1Cmd.turnItem.type === "command_execution"
+        ) {
+          assert.equal(turn1Cmd.turnItem.status, "running");
+        }
+        assert.isTrue(yield* session.hasPendingBackgroundWork ?? Effect.succeed(false));
+
+        // Wait until the post-settle watcher enters its poll sleep, then simulate native wakeup (step 101).
+        yield* Queue.take(pollWaiting);
+        appendSteps([[101, 3]]);
+        yield* TestClock.adjust("400 millis");
+        const wakeRequest = yield* continuationRequests.take;
+        assert.equal(wakeRequest.delivery, "message_text");
+        assert.deepEqual(wakeRequest.notification, {
+          source: { kind: "background_task" },
+          outcome: "completed",
+          summary: "Background task finished",
+        });
+
+        // Turn 2 runs the server-authored continuation turn, reattaches the stream, and completes Turn 1's command card.
+        yield* session.startTurn({
+          appThread: makeAppThread("approval-required"),
+          threadId,
+          runId: RunId.make("run-ag-wake-2"),
+          runOrdinal: 2,
+          providerTurnOrdinal: 2,
+          attemptId: RunAttemptId.make("attempt-ag-wake-2"),
+          rootNodeId: NodeId.make("node-ag-wake-2"),
+          providerThread,
+          message: {
+            createdBy: "agent",
+            creationSource: "server",
+            messageId: MessageId.make("msg-ag-wake-2"),
+            text: "Background task completed.",
+            attachments: [],
+          },
+          modelSelection,
+          runtimePolicy: policyFor("approval-required"),
+        });
+        const turn2Events = Array.from(
+          yield* session.events.pipe(
+            Stream.takeUntil((event) => event.type === "turn.terminal"),
+            Stream.runCollect,
+          ),
+        );
+        assert.include(sentPrompts[1] ?? "", ANTIGRAVITY_WAKE_CONTINUATION_PROMPT);
+        assert.notInclude(sentPrompts[1] ?? "", "Background task completed.");
+        const completedCmd = turn2Events.findLast(
+          (event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "command_execution",
+        );
+        assert.isDefined(completedCmd);
+        if (
+          completedCmd?.type === "turn_item.updated" &&
+          completedCmd.turnItem.type === "command_execution"
+        ) {
+          assert.equal(completedCmd.turnItem.status, "completed");
+          assert.equal(completedCmd.turnItem.exitCode, 0);
+          assert.equal(completedCmd.turnItem.output, "WAKE_DONE\n");
+        }
+        assert.isFalse(yield* session.hasPendingBackgroundWork ?? Effect.succeed(true));
+
+        // Turn 3 switches runtimeMode from approval-required -> full-access and restarts the runtime with updated policy.
+        yield* session.startTurn({
+          appThread: makeAppThread("full-access"),
+          threadId,
+          runId: RunId.make("run-ag-wake-3"),
+          runOrdinal: 3,
+          providerTurnOrdinal: 3,
+          attemptId: RunAttemptId.make("attempt-ag-wake-3"),
+          rootNodeId: NodeId.make("node-ag-wake-3"),
+          providerThread,
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: MessageId.make("msg-ag-wake-3"),
+            text: "now run in full-access",
+            attachments: [],
+          },
+          modelSelection,
+          runtimePolicy: policyFor("full-access"),
+        });
+        yield* session.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runDrain,
+        );
+        assert.deepEqual(spawnedRuntimeModes, ["approval-required", "full-access"]);
+      }).pipe(Effect.provide(Layer.mergeAll(layerSession, ProviderContinuationRequests.layer))),
   );
 });
