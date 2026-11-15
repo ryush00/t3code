@@ -44,6 +44,7 @@ import {
   antigravitySubagentOutput,
   classifyAntigravitySubagentToolCall,
   extractAntigravityBackgroundTaskId,
+  extractAntigravityElicitationForm,
   extractAntigravityUserInputQuestion,
   isAntigravityBackgroundCommandTool,
   makeAntigravityReadRepair,
@@ -281,6 +282,7 @@ export function makeAntigravityAcpAdapterFlavor(
         respond: (answers) => makeAntigravityUserInputResponse(request, answers),
       };
     },
+    extractElicitationForm: extractAntigravityElicitationForm,
     normalizeToolCall: normalizeAntigravityToolCall,
     extractBackgroundTaskId: extractAntigravityBackgroundTaskId,
     isBackgroundCommandTool: isAntigravityBackgroundCommandTool,
