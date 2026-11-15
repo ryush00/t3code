@@ -4157,3 +4157,126 @@ describe("AntigravityAdapterV2 update_steps checklist", () => {
     }).pipe(Effect.provide(layerSession)),
   );
 });
+
+describe("AntigravityAdapterV2 full-access restart", () => {
+  it.effect("restarts the runtime when a turn switches to full-access", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const crypto = yield* SecureRandom.SecureRandom;
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-ag-restart-ws-" });
+      const spawnedRuntimeModes: Array<string | undefined> = [];
+
+      const instanceId = ProviderInstanceId.make("antigravity-restart-test");
+      const threadId = ThreadId.make("thread-antigravity-restart");
+      const adapter = yield* makeAntigravityAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        makeRuntime: (input) =>
+          Effect.sync(() => {
+            spawnedRuntimeModes.push(input.runtimePolicy?.runtimeMode);
+          }).pipe(
+            Effect.andThen(
+              makeAntigravityAcpRuntime({
+                ...input,
+                childProcessSpawner,
+                spawn: {
+                  command: process.execPath,
+                  args: [mockAgentPath],
+                  cwd: input.cwd,
+                  env: { T3_ACP_ANTIGRAVITY: "1", T3_ACP_AGENT_VERSION: "1.5.9" },
+                },
+              }),
+            ),
+            Effect.provideService(SecureRandom.SecureRandom, crypto),
+            Effect.map((runtime): AcpSessionRuntime.AcpSessionRuntime["Service"] => ({
+              ...runtime,
+              prompt: () => Effect.succeed({ stopReason: "end_turn" as const }),
+            })),
+          ),
+        withProcess: (_stop, task) => task,
+        defaultModel: Effect.undefined,
+      });
+
+      const policyFor = (runtimeMode: "approval-required" | "full-access") =>
+        ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode,
+          interactionMode: "default",
+          cwd: workspace,
+        });
+      const modelSelection = { instanceId, model: "gemini-test-low" } as const;
+      const session = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-antigravity-restart"),
+        modelSelection,
+        runtimePolicy: policyFor("approval-required"),
+      });
+      const providerThread = yield* session.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy: policyFor("approval-required"),
+      });
+      const now = yield* DateTime.now;
+      const runTurn = (ordinal: number, runtimeMode: "approval-required" | "full-access") =>
+        session
+          .startTurn({
+            appThread: {
+              createdBy: "user",
+              creationSource: "web",
+              id: threadId,
+              projectId: ProjectId.make("project-antigravity-restart"),
+              title: "Antigravity restart",
+              providerInstanceId: instanceId,
+              modelSelection,
+              runtimeMode,
+              interactionMode: "default",
+              branch: null,
+              worktreePath: workspace,
+              activeProviderThreadId: providerThread.id,
+              lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+              forkedFrom: null,
+              createdAt: now,
+              updatedAt: now,
+              archivedAt: null,
+              settledOverride: null,
+              settledAt: null,
+              lastVisitedAt: null,
+              deletedAt: null,
+            },
+            threadId,
+            runId: RunId.make(`run-ag-restart-${ordinal}`),
+            runOrdinal: ordinal,
+            providerTurnOrdinal: ordinal,
+            attemptId: RunAttemptId.make(`attempt-ag-restart-${ordinal}`),
+            rootNodeId: NodeId.make(`node-ag-restart-${ordinal}`),
+            providerThread,
+            message: {
+              createdBy: "user",
+              creationSource: "web",
+              messageId: MessageId.make(`msg-ag-restart-${ordinal}`),
+              text: "continue",
+              attachments: [],
+            },
+            modelSelection,
+            runtimePolicy: policyFor(runtimeMode),
+          })
+          .pipe(
+            Effect.andThen(
+              session.events.pipe(
+                Stream.takeUntil((event) => event.type === "turn.terminal"),
+                Stream.runDrain,
+              ),
+            ),
+          );
+
+      yield* runTurn(1, "approval-required");
+      yield* runTurn(2, "full-access");
+      // The skip-permissions flag is a spawn argument, so the switch needs a new process.
+      assert.deepEqual(spawnedRuntimeModes, ["approval-required", "full-access"]);
+    }).pipe(Effect.provide(layerSession)),
+  );
+});
