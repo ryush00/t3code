@@ -10,9 +10,11 @@ import * as Cause from "effect/Cause";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
+import * as PullRequestService from "../../../pullRequest/PullRequestService.ts";
 import * as PullRequestWatchService from "../../../pullRequest/PullRequestWatchService.ts";
 import { resolveTarget, type ResolvedTarget } from "../../../pullRequest/pullRequestTarget.ts";
 import * as PullRequestReviewGuideService from "../../../pullRequest/PullRequestReviewGuideService.ts";
@@ -38,6 +40,7 @@ import {
   PullRequestThreadRequiredError,
   PullRequestGuideFailedError,
   PullRequestProjectNotFoundError,
+  PullRequestUploadFailedError,
   PullRequestsToolkit,
   type ThreadPullRequestEntry,
   CHILD_PULL_REQUEST_REPORT_NEXT,
@@ -145,8 +148,10 @@ function projectForPullRequest(
 
 const make = Effect.gen(function* () {
   const engine = yield* Orchestrator.OrchestratorV2;
+  const pullRequests = yield* PullRequestService.PullRequestService;
   const reviewGuides = yield* PullRequestReviewGuideService.PullRequestReviewGuideService;
   const watches = yield* PullRequestWatchService.PullRequestWatchService;
+  const path = yield* Path.Path;
 
   const projects = yield* ProjectService.ProjectService;
   const random = yield* SecureRandom.SecureRandom;
@@ -534,6 +539,92 @@ const make = Effect.gen(function* () {
             result.currentHeadSha !== null &&
             result.guide.headSha !== result.currentHeadSha,
         };
+      }),
+    ),
+    upload_pull_request_attachment: writesThread((input) =>
+      Effect.gen(function* () {
+        const scope = yield* McpInvocationContext.requireMcpCapability("pull-requests");
+        const threadId = input.threadId ?? scope.thread?.threadId;
+        const callerThread =
+          threadId === undefined
+            ? undefined
+            : yield* engine.getThreadShell(threadId).pipe(
+                Effect.map((shell) =>
+                  shell === null || shell.deletedAt !== null ? undefined : shell,
+                ),
+                Effect.mapError(
+                  (cause) =>
+                    new PullRequestUploadFailedError({
+                      detail: "Could not read thread context.",
+                      cause,
+                    }),
+                ),
+              );
+        const known = yield* projects.listShells().pipe(
+          Effect.mapError(
+            (cause) =>
+              new PullRequestUploadFailedError({
+                detail: "Could not list projects.",
+                cause,
+              }),
+          ),
+        );
+        const callerProject = known.find((project) => project.id === callerThread?.projectId);
+
+        let targetHost = input.host;
+        let targetRepository = input.repository;
+        let targetNumber = input.number;
+        if (
+          input.url !== undefined ||
+          (input.repository !== undefined && input.number !== undefined)
+        ) {
+          const resolved = yield* resolveTarget(input, callerProject);
+          targetHost = resolved.host;
+          targetRepository = resolved.repository;
+          targetNumber = resolved.number;
+        }
+
+        const matchedProject =
+          targetHost !== undefined && targetRepository !== undefined
+            ? (projectForPullRequest(
+                known,
+                { host: targetHost, repository: targetRepository },
+                callerProject,
+              ) ?? callerProject)
+            : callerProject;
+        if (matchedProject === undefined) {
+          if (targetRepository !== undefined) {
+            return yield* new PullRequestProjectNotFoundError({ repository: targetRepository });
+          }
+          return yield* new PullRequestThreadRequiredError();
+        }
+
+        const baseDir = callerThread?.worktreePath ?? matchedProject.workspaceRoot;
+        const resolvedFilePath = path.isAbsolute(input.path)
+          ? input.path
+          : path.resolve(baseDir, input.path);
+        const fileName = path.basename(resolvedFilePath);
+
+        return yield* pullRequests
+          .uploadAttachment({
+            projectId: matchedProject.id,
+            repository: targetRepository,
+            host: targetHost,
+            number: targetNumber,
+            filePath: resolvedFilePath,
+            fileName,
+            alt: input.alt,
+          })
+          .pipe(
+            Effect.mapError((error) =>
+              error._tag === "PullRequestUnavailableError"
+                ? error
+                : new PullRequestUploadFailedError({
+                    detail: guideFailureDetail(error),
+                    cause: error,
+                  }),
+            ),
+          );
       }),
     ),
   } satisfies McpToolAccess.Handlers<typeof PullRequestsToolkit.tools>;
