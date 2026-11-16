@@ -5620,5 +5620,12 @@
   "89bf40eb2503b6c5": "Ny enhet inloggad på {environment}",
   "c94b5fe9ef372bc0": "{device} anslöt via {product}. Om det inte var du, ta bort den under Inställningar → Åtkomst i T3 Code på den datorn.",
   "bec67d0ed485f885": "{count, plural, one {{count} enhet} other {{count} enheter}} anslöt via {product}. Om det inte var du, ta bort dem under Inställningar → Åtkomst i T3 Code på den datorn.",
-  "1e4248d235c665e5": "Antigravitys summor utelämnar subagentanrop som bara finns i transkript."
+  "1e4248d235c665e5": "Antigravitys summor utelämnar subagentanrop som bara finns i transkript.",
+  "c810e443033ac25a": "''{name}'' är tom.",
+  "7ce0e7e30613750d": "''{name}'' stöds inte på GitHub. Bifoga PNG-, JPEG-, GIF-, WebP-, SVG-, MP4-, MOV- eller WebM-filer.",
+  "9aa2077538cb3443": "Laddar upp {count} filer…",
+  "167ee73b0ebb4806": "Laddar upp fil…",
+  "5f31c62bdf26a7be": "Bifoga fil",
+  "48223896dc3bab24": "Det gick inte att öppna bildbiblioteket",
+  "d1aa0d093eca5e03": "Det gick inte att öppna filväljaren"
 }

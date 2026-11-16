@@ -5614,5 +5614,12 @@
   "89bf40eb2503b6c5": "Novo dispositivo conectado a {environment}",
   "c94b5fe9ef372bc0": "{device} se conectou pelo {product}. Se não foi você, remova-o em Configurações → Acesso no T3 Code desse computador.",
   "bec67d0ed485f885": "{count, plural, one {{count} dispositivo se conectou} other {{count} dispositivos se conectaram}} pelo {product}. Se não foi você, remova-os em Configurações → Acesso no T3 Code desse computador.",
-  "1e4248d235c665e5": "Os totais do Antigravity deixam de fora chamadas de subagentes registradas apenas nas transcrições."
+  "1e4248d235c665e5": "Os totais do Antigravity deixam de fora chamadas de subagentes registradas apenas nas transcrições.",
+  "c810e443033ac25a": "''{name}'' está vazio.",
+  "7ce0e7e30613750d": "O GitHub não aceita ''{name}''. Anexe arquivos PNG, JPEG, GIF, WebP, SVG, MP4, MOV ou WebM.",
+  "9aa2077538cb3443": "Enviando {count} arquivos…",
+  "167ee73b0ebb4806": "Enviando arquivo…",
+  "5f31c62bdf26a7be": "Anexar arquivo",
+  "48223896dc3bab24": "Não foi possível abrir a fototeca",
+  "d1aa0d093eca5e03": "Não foi possível abrir o seletor de arquivos"
 }

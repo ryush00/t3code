@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { canAttachToPullRequest } from "@t3tools/client-runtime/pull-request-attachments";
 import {
   canEditPullRequestChangeRequest,
   canEditPullRequestComment,
@@ -27,8 +28,12 @@ export function usePullRequestPermissions(params: PullRequestParams, pr: PullReq
   const canSetReaction = useAtomValue(
     composerPullRequests.setReaction.permissionAtom(environmentId),
   );
+  const canUploadAttachment = useAtomValue(
+    composerPullRequests.uploadAttachment.permissionAtom(environmentId),
+  );
   return {
     connected,
+    canAttach: connected && canUploadAttachment && canAttachToPullRequest(pr),
     canInlineComment:
       connected &&
       canReview &&
