@@ -105,6 +105,7 @@ import {
   PersistChatAttachmentsError,
   RpcClientId,
   EnvironmentAuthorizationError,
+  PullRequestOperationError,
   ThreadId,
   type TerminalMetadataStreamEvent,
   type PullRequestRef,
@@ -222,7 +223,11 @@ import {
   createDeterministicAttachmentId,
 } from "./attachmentStore.ts";
 import { parseBase64DataUrl } from "./imageMime.ts";
-import { deletePendingAttachment, issueAttachmentUploadUrl } from "./assets/AttachmentUpload.ts";
+import {
+  deletePendingAttachment,
+  issueAttachmentUploadUrl,
+  resolvePendingAttachmentPath,
+} from "./assets/AttachmentUpload.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFolders from "./workspace/WorkspaceFolders.ts";
@@ -3014,6 +3019,43 @@ export const layerWsRpc = (
           withPullRequestViewer(input, pullRequests.labelCandidates(input)),
         [WS_METHODS.pullRequestsSetLabels]: (input) =>
           withPullRequestViewer(input, pullRequests.setLabels(input)),
+        [WS_METHODS.pullRequestsUploadAttachment]: (input) =>
+          resolvePendingAttachmentPath(input.attachmentId).pipe(
+            Effect.flatMap((filePath) => {
+              if (!filePath) {
+                return Effect.fail(
+                  new PullRequestOperationError({
+                    operation: "uploadAttachment",
+                    detail:
+                      "The uploaded file expired before it could be sent to the host. Try attaching it again.",
+                  }),
+                );
+              }
+              const run = pullRequests.uploadAttachment({
+                projectId: input.projectId,
+                repository: input.repository,
+                host: input.host,
+                number: input.number,
+                filePath,
+                fileName: input.fileName,
+                mimeType: input.mimeType,
+                alt: input.alt,
+              });
+              const scoped =
+                input.repository !== undefined && input.number !== undefined
+                  ? withPullRequestViewer(
+                      {
+                        projectId: input.projectId,
+                        repository: input.repository,
+                        ...(input.host === undefined ? {} : { host: input.host }),
+                        number: input.number,
+                      },
+                      run,
+                    )
+                  : run;
+              return scoped.pipe(Effect.tap(() => deletePendingAttachment(input.attachmentId)));
+            }),
+          ),
         [WS_METHODS.sourceControlLookupRepository]: (input) =>
           sourceControlRepositories.lookupRepository(input),
         [WS_METHODS.sourceControlCloneRepository]: (input) =>

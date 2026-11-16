@@ -1,5 +1,6 @@
 import {
   AuthOrchestrationOperateScope,
+  AuthSourceControlWriteScope,
   EnvironmentAuthorizationError,
   EnvironmentId,
 } from "@t3tools/contracts";
@@ -13,13 +14,16 @@ import { afterEach, beforeEach, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
   grantedEnvironments: new Set<string>(),
+  grantedSourceControlEnvironments: new Set<string>(),
   create: vi.fn(),
   remove: vi.fn(),
 }));
 vi.mock("../connection/runtime", () => ({ connectionAtomRuntime: {} }));
 vi.mock("./session", () => ({
   readEnvironmentScope: (environmentId: string, scope: string) =>
-    scope === AuthOrchestrationOperateScope && state.grantedEnvironments.has(environmentId),
+    (scope === AuthOrchestrationOperateScope && state.grantedEnvironments.has(environmentId)) ||
+    (scope === AuthSourceControlWriteScope &&
+      state.grantedSourceControlEnvironments.has(environmentId)),
 }));
 vi.mock("@t3tools/client-runtime/state/attachments", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@t3tools/client-runtime/state/attachments")>()),
@@ -35,6 +39,7 @@ const environmentId = EnvironmentId.make("secondary");
 const registry = AtomRegistry.make();
 beforeEach(() => {
   state.grantedEnvironments = new Set(["primary"]);
+  state.grantedSourceControlEnvironments = new Set();
   state.create.mockReset().mockReturnValue(
     Effect.succeed({
       attachmentId: "pending",
@@ -108,6 +113,32 @@ describe("attachment mutation grants", () => {
       yield* Fiber.interrupt(cycle);
       expect(state.create).toHaveBeenCalledOnce();
       expect(state.remove).not.toHaveBeenCalled();
+    }),
+  );
+
+  it.effect("checks source-control write permission for pull-request attachment uploads", () =>
+    Effect.gen(function* () {
+      const denied = yield* Effect.exit(
+        attachmentEnvironment.createUploadUrl.run(registry, {
+          environmentId,
+          input: { type: "pull-request", name: "demo.mp4", mimeType: "video/mp4", sizeBytes: 128 },
+        }),
+      );
+      expect(denied._tag).toBe("Failure");
+      if (denied._tag !== "Failure") throw new Error("Expected permission denial");
+      expect(Cause.squash<unknown>(denied.cause)).toMatchObject({
+        requiredScope: AuthSourceControlWriteScope,
+      });
+
+      state.grantedSourceControlEnvironments.add("secondary");
+      const allowed = yield* Effect.exit(
+        attachmentEnvironment.createUploadUrl.run(registry, {
+          environmentId,
+          input: { type: "pull-request", name: "demo.mp4", mimeType: "video/mp4", sizeBytes: 128 },
+        }),
+      );
+      expect(allowed._tag).toBe("Success");
+      expect(state.create).toHaveBeenCalledOnce();
     }),
   );
 });

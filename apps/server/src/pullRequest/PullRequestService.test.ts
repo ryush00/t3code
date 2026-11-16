@@ -5543,3 +5543,98 @@ it.effect.each(["expiry", "commit expiry", "cache hit", "commit cache hit", "ref
       assert.strictEqual(diffReads, 2);
     }),
 );
+
+it.effect(
+  "uploads pull request attachments through providers that support them and rejects unsupported hosts",
+  () =>
+    Effect.gen(function* () {
+      let viewerCanUpload = true;
+      const baseProvider = fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+        getViewerPermissions: () =>
+          Effect.succeed({
+            actions: ["merge"],
+            comment: true,
+            resolve: true,
+            verdicts: ["comment", "approve", "request-changes"],
+            requestReviewers: true,
+            uploadAttachment: viewerCanUpload,
+          }),
+      });
+      const unsupportedProvider = fakePullRequestProvider(
+        SourceControlProviderKind.make("bitbucket"),
+        {},
+      );
+      const service = yield* makeService({
+        projects: [
+          project({ id: "p-gh", title: "gh", workspaceRoot: "/gh", repository: "acme/web" }),
+          project({
+            id: "p-bb",
+            title: "bb",
+            workspaceRoot: "/bb",
+            repository: "acme/bb",
+            provider: "bitbucket",
+            host: "bitbucket.org",
+          }),
+        ],
+        providers: [
+          {
+            ...baseProvider,
+            capabilities: { ...baseProvider.capabilities, attachments: true },
+            uploadAttachment: (input) =>
+              Effect.succeed({
+                url: `https://uploads.github.com/user-attachments/assets/${input.fileName}`,
+                markdown: `![${input.alt ?? input.fileName}](https://uploads.github.com/user-attachments/assets/${input.fileName})`,
+                name: input.fileName,
+                mimeType: input.mimeType ?? "image/png",
+              }),
+          },
+          unsupportedProvider,
+        ],
+      });
+
+      const uploaded = yield* service.uploadAttachment({
+        projectId: "p-gh" as ProjectId,
+        repository: "acme/web",
+        number: 1,
+        filePath: "/tmp/demo.png",
+        fileName: "demo.png",
+        alt: "Demo capture",
+      });
+      assert.strictEqual(
+        uploaded.markdown,
+        "![Demo capture](https://uploads.github.com/user-attachments/assets/demo.png)",
+      );
+
+      viewerCanUpload = false;
+      yield* service.invalidate({
+        reference: { projectId: "p-gh" as ProjectId, repository: "acme/web", number: 1 },
+      });
+      const denied = yield* service
+        .uploadAttachment({
+          projectId: "p-gh" as ProjectId,
+          repository: "acme/web",
+          number: 1,
+          filePath: "/tmp/demo.png",
+          fileName: "demo.png",
+        })
+        .pipe(Effect.flip);
+      assert.strictEqual(denied._tag, "PullRequestOperationError");
+      if (denied._tag === "PullRequestOperationError") {
+        assert.include(denied.detail, "write access");
+      }
+
+      const error = yield* service
+        .uploadAttachment({
+          projectId: "p-bb" as ProjectId,
+          repository: "acme/bb",
+          number: 1,
+          filePath: "/tmp/demo.png",
+          fileName: "demo.png",
+        })
+        .pipe(Effect.flip);
+      assert.strictEqual(error._tag, "PullRequestOperationError");
+      if (error._tag === "PullRequestOperationError") {
+        assert.strictEqual(error.detail, "This host cannot attach files to change requests.");
+      }
+    }),
+);
