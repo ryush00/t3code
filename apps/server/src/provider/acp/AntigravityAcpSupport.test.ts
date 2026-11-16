@@ -113,6 +113,32 @@ describe("Antigravity Auto", () => {
     );
   });
 
+  it("allows T3 Code's own MCP tools in Auto without auto-allowing other MCP tools", () => {
+    const mcp = (title: string): EffectAcpSchema.RequestPermissionRequest => ({
+      sessionId: "session-1",
+      toolCall: { toolCallId: "tool-1", kind: "other", title },
+      options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }],
+    });
+    expect(
+      [
+        "Run mcp_t3-code_t3_thread_read",
+        "Run mcp_t3-code_preview_snapshot?",
+        "Run mcp_t3-code_not_a_real_tool",
+        "Run mcp_github_t3_thread_read",
+        "Run mcp_t3-code_t3_thread_read && rm -rf /",
+        "t3_thread_read",
+      ].map((title) =>
+        antigravityPermissionDisposition({ runtimeMode: "auto", cwd: "/workspace" }, mcp(title)),
+      ),
+    ).toEqual(["allow", "allow", "ask", "ask", "ask", "ask"]);
+    expect(
+      antigravityPermissionDisposition(
+        { runtimeMode: "approval-required", cwd: "/workspace" },
+        mcp("Run mcp_t3-code_t3_thread_read"),
+      ),
+    ).toBe("ask");
+  });
+
   it.each([{ type: "readOnly" }, { type: "workspaceWrite", writableRoots: [] }])(
     "keeps the $type sandbox's denials in Auto",
     (sandboxPolicy) => {
