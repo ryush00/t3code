@@ -5469,5 +5469,12 @@
   "3328503592789bed": "Zen",
   "856812e7e1fc445e": "Tool-Aufrufe im Chat",
   "8d545d54c0a9e950": "Die Befehle, Bearbeitungen und Suchen ausblenden, die Agenten ausführen. „Erfolgreiche ausblenden“ behält Fehler. „Zen“ zeigt nur endgültige Antworten. Genehmigungen, Fragen und Fehler werden immer angezeigt.",
-  "1e4248d235c665e5": "Antigravity-Summen lassen Subagent-Aufrufe aus, die nur in Transkripten erfasst sind."
+  "1e4248d235c665e5": "Antigravity-Summen lassen Subagent-Aufrufe aus, die nur in Transkripten erfasst sind.",
+  "c810e443033ac25a": "''{name}'' ist leer.",
+  "7ce0e7e30613750d": "''{name}'' wird von GitHub nicht unterstützt. Hänge PNG-, JPEG-, GIF-, WebP-, SVG-, MP4-, MOV- oder WebM-Dateien an.",
+  "9aa2077538cb3443": "{count} Dateien werden hochgeladen…",
+  "167ee73b0ebb4806": "Datei wird hochgeladen…",
+  "5f31c62bdf26a7be": "Datei anhängen",
+  "48223896dc3bab24": "Fotomediathek konnte nicht geöffnet werden",
+  "d1aa0d093eca5e03": "Dateiauswahl konnte nicht geöffnet werden"
 }

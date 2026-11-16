@@ -831,3 +831,88 @@ it.effect("requires provider management to send /logout through chat", () =>
     ]);
   }).pipe(Effect.scoped),
 );
+
+it.effect(
+  "gates pull-request attachment uploads behind source-control write permission while keeping chat uploads behind orchestration operate",
+  () =>
+    Effect.gen(function* () {
+      const group = WsRpcGroup.omit(
+        ...[...WsRpcGroup.requests.keys()].filter(
+          (
+            tag,
+          ): tag is Exclude<
+            keyof typeof RPC_REQUIRED_SCOPES,
+            | typeof WS_METHODS.attachmentsCreateUploadUrl
+            | typeof WS_METHODS.pullRequestsUploadAttachment
+          > =>
+            tag !== WS_METHODS.attachmentsCreateUploadUrl &&
+            tag !== WS_METHODS.pullRequestsUploadAttachment,
+        ),
+      );
+      const handled: Array<string> = [];
+      const handlers = Layer.mergeAll(
+        group.toLayerHandler(WS_METHODS.attachmentsCreateUploadUrl, (input) =>
+          Effect.sync(() => {
+            handled.push(`mint:${input.type}`);
+            return {
+              attachmentId: "pending-00000000-0000-4000-8000-000000000001",
+              relativeUrl: "/api/attachments/upload/token",
+              expiresAt: 1,
+            };
+          }),
+        ),
+        group.toLayerHandler(WS_METHODS.pullRequestsUploadAttachment, () =>
+          Effect.sync(() => {
+            handled.push("upload");
+            return {
+              url: "https://uploads.github.com/user-attachments/assets/1",
+              markdown: "![shot](https://uploads.github.com/user-attachments/assets/1)",
+              name: "shot.png",
+              mimeType: "image/png",
+            };
+          }),
+        ),
+      );
+      const scWriterOnly = yield* RpcTest.makeClient(group).pipe(
+        Effect.provide(
+          Layer.merge(handlers, RpcAuthorization.layer([AuthSourceControlWriteScope])),
+        ),
+      );
+      yield* scWriterOnly[WS_METHODS.attachmentsCreateUploadUrl]({
+        type: "pull-request",
+        name: "demo.mp4",
+        mimeType: "video/mp4",
+        sizeBytes: 1024,
+      });
+      yield* scWriterOnly[WS_METHODS.pullRequestsUploadAttachment]({
+        projectId: "project-1" as never,
+        repository: "acme/web",
+        number: 1,
+        attachmentId: "pending-00000000-0000-4000-8000-000000000001",
+        fileName: "demo.mp4",
+      });
+      expect(
+        yield* scWriterOnly[WS_METHODS.attachmentsCreateUploadUrl]({
+          type: "file",
+          name: "notes.txt",
+          mimeType: "text/plain",
+          sizeBytes: 12,
+        }).pipe(Effect.flip),
+      ).toMatchObject({ requiredPermission: AuthOrchestrationOperateScope });
+
+      const orchestratorOnly = yield* RpcTest.makeClient(group).pipe(
+        Effect.provide(
+          Layer.merge(handlers, RpcAuthorization.layer([AuthOrchestrationOperateScope])),
+        ),
+      );
+      expect(
+        yield* orchestratorOnly[WS_METHODS.attachmentsCreateUploadUrl]({
+          type: "pull-request",
+          name: "demo.mp4",
+          mimeType: "video/mp4",
+          sizeBytes: 1024,
+        }).pipe(Effect.flip),
+      ).toMatchObject({ requiredPermission: AuthSourceControlWriteScope });
+      expect(handled).toEqual(["mint:pull-request", "upload"]);
+    }),
+);
