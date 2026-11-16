@@ -131,6 +131,14 @@ describe("evaluatePullRequestWatch", () => {
     assert.isFalse(baseline.exhausted);
     assert.deepEqual(evaluatePullRequestWatch(baseline.next, green, noRemarks).changes, []);
 
+    const finished = evaluatePullRequestWatch(
+      watch({ awaitingBaseline: "all", checksPending: true }),
+      green,
+      noRemarks,
+    );
+    assert.deepEqual(finished.changes, [{ kind: "checks-passed", count: 1, required }]);
+    assert.deepEqual(evaluatePullRequestWatch(finished.next, green, noRemarks).changes, []);
+
     const pending = evaluatePullRequestWatch(
       baseline.next,
       detail({ checks: [{ ...check("test", "pending"), required }] }),
