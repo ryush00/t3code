@@ -41,7 +41,7 @@ const lastPendingSweepByDirectory = new Map<string, number>();
 const AttachmentUploadClaims = Schema.Struct({
   version: Schema.Literal(1),
   kind: Schema.Literal("attachment-upload"),
-  type: Schema.Literals(["image", "file"]).pipe(
+  type: Schema.Literals(["image", "file", "pull-request"]).pipe(
     Schema.withDecodingDefault(Effect.succeed("image" as const)),
   ),
   attachmentId: Schema.String,
@@ -85,12 +85,13 @@ export const issueAttachmentUploadUrl = Effect.fn("AttachmentUpload.issueUrl")(f
   }
 
   const attachmentType = input.type ?? "image";
+  const isGenericFile = attachmentType === "file" || attachmentType === "pull-request";
   const name =
-    attachmentType === "file" && isSvgAttachment(input) && !/\.svg$/i.test(input.name)
+    isGenericFile && isSvgAttachment(input) && !/\.svg$/i.test(input.name)
       ? `${input.name}.svg`
       : input.name;
   const attachmentId = createPendingAttachmentId(
-    attachmentType === "file" ? attachmentFileExtension(name) : undefined,
+    isGenericFile ? attachmentFileExtension(name) : undefined,
   );
   const expiresAt = nowMs + ATTACHMENT_UPLOAD_URL_TTL_MS;
   const encodedPayload = base64UrlEncode(
@@ -161,7 +162,7 @@ export const storeAttachmentUpload = Effect.fn("AttachmentUpload.store")(functio
 
   const config = yield* ServerConfig.ServerConfig;
   const extension =
-    claims.type === "file"
+    claims.type === "file" || claims.type === "pull-request"
       ? attachmentFileExtension(claims.name)
       : inferImageExtension({ mimeType: claims.mimeType, fileName: claims.name });
   const relativePath = `${claims.attachmentId}${extension}`;
@@ -245,8 +246,10 @@ export const storeAttachmentUpload = Effect.fn("AttachmentUpload.store")(functio
         return { ok: false, status: 409, detail: "Attachment already uploaded." };
       }
     }
-    const documents = yield* DocumentText.DocumentText;
-    yield* documents.ensure(finalPath);
+    if (claims.type !== "pull-request") {
+      const documents = yield* DocumentText.DocumentText;
+      yield* documents.ensure(finalPath);
+    }
     return { ok: true } satisfies StoreAttachmentUploadResult;
   }).pipe(
     Effect.catch((cause) =>
@@ -266,6 +269,27 @@ export const storeAttachmentUpload = Effect.fn("AttachmentUpload.store")(functio
     ),
   );
 });
+
+export const resolvePendingAttachmentPath = Effect.fn("AttachmentUpload.resolvePendingPath")(
+  function* (attachmentId: string) {
+    if (parseThreadSegmentFromAttachmentId(attachmentId) !== PENDING_ATTACHMENT_THREAD_SEGMENT) {
+      return null;
+    }
+
+    const config = yield* ServerConfig.ServerConfig;
+    const attachmentPath = resolveAttachmentPathById({
+      attachmentsDir: config.attachmentsDir,
+      attachmentId,
+    });
+    if (!attachmentPath) {
+      return null;
+    }
+
+    const fileSystem = yield* FileSystem.FileSystem;
+    const exists = yield* fileSystem.exists(attachmentPath).pipe(Effect.orElseSucceed(() => false));
+    return exists ? attachmentPath : null;
+  },
+);
 
 export const deletePendingAttachment = Effect.fn("AttachmentUpload.deletePending")(function* (
   attachmentId: string,

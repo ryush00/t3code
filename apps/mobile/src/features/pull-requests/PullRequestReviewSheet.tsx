@@ -20,6 +20,8 @@ import { PullRequestSheetContent as SheetContent } from "./PullRequestSheetConte
 import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff";
 import { usePullRequestPermissions } from "./usePullRequestPermissions";
 import { PullRequestCompletionSuggestions } from "./PullRequestCompletionSuggestions";
+import { PullRequestAttachButton } from "./PullRequestAttachButton";
+import { usePullRequestAttachmentUpload } from "./usePullRequestAttachmentUpload";
 import { usePullRequestCompletions } from "./usePullRequestCompletions";
 
 function useActionSubmission(params: PullRequestParams) {
@@ -90,6 +92,21 @@ export function PullRequestReviewSheet({
     onChangeValue: setBody,
     support: result.data?.capabilities ?? null,
   });
+  const attachments = usePullRequestAttachmentUpload({
+    environmentId: target.environmentId,
+    reference: target.input,
+    provider: result.data?.provider,
+    value: body,
+    updateValue: (updater) =>
+      store.update((draft) => ({
+        ...draft,
+        ...(params.mode === "review"
+          ? { summary: updater(draft.summary) }
+          : { comment: updater(draft.comment) }),
+      })),
+    selection: completions.currentSelection,
+    onPlaceCursor: completions.placeCursor,
+  });
   const stale = store.draft.comments.some((comment) => comment.headSha !== result.data?.headSha);
   const [requestedVerdict, setRequestedVerdict] = useState<PullRequestReviewVerdict>("comment");
   const offered = VERDICTS.filter((option) => permissions.verdicts.includes(option.value));
@@ -103,6 +120,7 @@ export function PullRequestReviewSheet({
       : false;
   const canSubmit =
     store.ready &&
+    !attachments.uploading &&
     (!reviewing || (!stale && canSubmitComments)) &&
     (reviewing
       ? verdict !== undefined &&
@@ -200,6 +218,15 @@ export function PullRequestReviewSheet({
         className="min-h-36 rounded-[20px] bg-grouped-card p-4 text-base text-foreground"
         style={{ textAlignVertical: "top" }}
       />
+      {permissions.canAttach ? (
+        <PullRequestAttachButton
+          disabled={!store.ready || submission.busy}
+          uploading={attachments.uploading}
+          uploadingCount={attachments.uploadingCount}
+          onPickMedia={attachments.pickMedia}
+          onPickFiles={attachments.pickFiles}
+        />
+      ) : null}
       {reviewing && store.draft.comments.length ? (
         <View className="gap-2">
           <Text className="text-sm font-t3-medium">

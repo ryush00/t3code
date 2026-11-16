@@ -29,12 +29,27 @@ const STORED_ONLY_ENV = {
   GLAB_ENABLE_CI_AUTOLOGIN: "false",
 };
 
+export interface GitLabUploadAuth {
+  readonly apiOrigin: string;
+  readonly token: Redacted.Redacted<string>;
+}
+
+function normalizeEnvHost(raw: string | undefined): string {
+  const trimmed = raw?.trim() ?? "";
+  if (trimmed === "") return "gitlab.com";
+  if (URL.canParse(trimmed)) return new URL(trimmed).host.toLowerCase();
+  if (URL.canParse(`https://${trimmed}`)) return new URL(`https://${trimmed}`).host.toLowerCase();
+  return trimmed.toLowerCase();
+}
+
 /** The token `glab` stores for a GitLab host, used to read what that host serves to the user. */
 export class GitLabCredentials extends Context.Service<
   GitLabCredentials,
   {
     /** None when `glab` holds no login for the host. */
     readonly get: (host: string) => Effect.Effect<Option.Option<Redacted.Redacted<string>>>;
+    /** Token and API origin for an explicit project action, allowing matching environment tokens. */
+    readonly getUploadAuth: (host: string) => Effect.Effect<Option.Option<GitLabUploadAuth>>;
     /** Drops the held token after GitLab refused it, so the next read asks `glab` again. */
     readonly invalidate: (host: string) => Effect.Effect<void>;
   }
@@ -44,6 +59,7 @@ export class GitLabCredentials extends Context.Service<
 export const make = Effect.gen(function* () {
   const { process } = yield* SourceControlHost.SourceControlHost;
   const workingDirectory = yield* HostProcess.WorkingDirectory;
+  const environment = yield* HostProcess.Environment;
 
   const run = (args: ReadonlyArray<string>, timeoutMs = 10_000) =>
     process.run({
@@ -101,8 +117,57 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  const resolveApiOrigin = Effect.fn("GitLabCredentials.resolveApiOrigin")(function* (
+    loginHost: string,
+    defaultHost: string,
+  ) {
+    const configuredHost = (yield* glab(["config", "get", "api_host", "--host", loginHost]))
+      .trim()
+      .toLowerCase();
+    const configuredProtocol = (yield* glab(["config", "get", "api_protocol", "--host", loginHost]))
+      .trim()
+      .toLowerCase();
+    const protocol = configuredProtocol === "http" ? "http" : "https";
+    const apiHost = configuredHost || defaultHost;
+    return `${protocol}://${apiHost}`;
+  });
+
+  const lookupUploadAuth = Effect.fn("GitLabCredentials.lookupUploadAuth")(function* (
+    rawHost: string,
+  ) {
+    const host = rawHost.trim().toLowerCase();
+    const direct = yield* login(host);
+    if (Option.isSome(direct)) {
+      return Option.some({
+        apiOrigin: yield* resolveApiOrigin(host, host),
+        token: direct.value,
+      });
+    }
+    const alias = yield* aliasFor(host);
+    if (alias !== undefined && alias !== host) {
+      const aliased = yield* login(alias);
+      if (Option.isSome(aliased)) {
+        return Option.some({
+          apiOrigin: yield* resolveApiOrigin(alias, host),
+          token: aliased.value,
+        });
+      }
+    }
+    const envToken = (environment.GITLAB_TOKEN ?? environment.GITLAB_ACCESS_TOKEN)?.trim() ?? "";
+    if (envToken !== "" && normalizeEnvHost(environment.GITLAB_HOST) === host) {
+      return Option.some({
+        apiOrigin: `https://${host}`,
+        token: Redacted.make(envToken),
+      });
+    }
+    return Option.none();
+  });
+
   return GitLabCredentials.of({
     get: Effect.fn("GitLabCredentials.get")((host) => Cache.get(cache, host.trim().toLowerCase())),
+    getUploadAuth: Effect.fn("GitLabCredentials.getUploadAuth")((host) =>
+      lookupUploadAuth(host).pipe(Effect.orElseSucceed(() => Option.none())),
+    ),
     invalidate: Effect.fn("GitLabCredentials.invalidate")((host) =>
       Cache.invalidate(cache, host.trim().toLowerCase()),
     ),
