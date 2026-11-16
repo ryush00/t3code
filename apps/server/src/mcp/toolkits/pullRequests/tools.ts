@@ -7,10 +7,12 @@ import {
   PullRequestReviewGuideRun,
   PullRequestState,
   PullRequestUnavailableError,
+  PullRequestUploadAttachmentResult,
   ThreadPullRequestLinkSource,
   TrimmedNonEmptyString,
   ThreadId,
 } from "@t3tools/contracts";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as McpSchema from "effect/ai/McpSchema";
 import * as Tool from "effect/ai/Tool";
@@ -28,6 +30,7 @@ import {
   PullRequestUrlUnavailableError,
 } from "../../../pullRequest/pullRequestTarget.ts";
 import * as PullRequestReviewGuideService from "../../../pullRequest/PullRequestReviewGuideService.ts";
+import * as PullRequestService from "../../../pullRequest/PullRequestService.ts";
 
 const dependencies = [
   McpInvocationContext.McpInvocationContext,
@@ -42,6 +45,8 @@ const guideDependencies = [
 ];
 
 const watchDependencies = [...dependencies, PullRequestWatchService.PullRequestWatchService];
+
+const attachmentDependencies = [...dependencies, PullRequestService.PullRequestService, Path.Path];
 
 export const PullRequestTargetInput = Schema.Struct({
   environmentId: OrchestratorMcpEnvironmentTarget,
@@ -123,6 +128,15 @@ export class PullRequestGuideFailedError extends Schema.TaggedError<PullRequestG
   }
 }
 
+export class PullRequestUploadFailedError extends Schema.TaggedError<PullRequestUploadFailedError>()(
+  "PullRequestUploadFailedError",
+  { detail: Schema.String, cause: Schema.optional(Schema.Defect()) },
+) {
+  override get message(): string {
+    return this.detail;
+  }
+}
+
 export const PullRequestToolError = Schema.Union([
   OrchestratorMcpFailure,
   McpCapabilityUnavailableError,
@@ -140,6 +154,7 @@ export const PullRequestToolError = Schema.Union([
   PullRequestWatchService.PullRequestWatchFromSubagentError,
   PullRequestProjectNotFoundError,
   PullRequestGuideFailedError,
+  PullRequestUploadFailedError,
 ]);
 export type PullRequestToolError = typeof PullRequestToolError.Type;
 
@@ -418,6 +433,31 @@ const ReadPullRequestGuideTool = Tool.make("read_pull_request_guide", {
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, true);
 
+const UploadPullRequestAttachmentTool = Tool.make("upload_pull_request_attachment", {
+  description:
+    "Upload a local image or video to a GitHub or GitLab repository and return `{url, markdown}` for PR/MR text.",
+  parameters: Schema.Struct({
+    environmentId: OrchestratorMcpEnvironmentTarget,
+    path: TrimmedNonEmptyString.annotate({
+      description: "Local file path.",
+    }),
+    alt: Schema.optional(TrimmedNonEmptyString),
+    threadId: PullRequestTargetInput.fields.threadId,
+    url: PullRequestTargetInput.fields.url,
+    repository: PullRequestTargetInput.fields.repository,
+    number: PullRequestTargetInput.fields.number,
+    host: PullRequestTargetInput.fields.host,
+  }),
+  success: PullRequestUploadAttachmentResult,
+  failure: PullRequestToolError,
+  dependencies: attachmentDependencies,
+})
+  .annotate(Tool.Title, "Upload pull request attachment")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, false)
+  .annotate(Tool.OpenWorld, true);
+
 export const PullRequestsToolkit = Toolkit.make(
   LinkPullRequestTool,
   LinkPullRequestsTool,
@@ -428,4 +468,5 @@ export const PullRequestsToolkit = Toolkit.make(
   UnwatchPullRequestTool,
   WritePullRequestGuidesTool,
   ReadPullRequestGuideTool,
+  UploadPullRequestAttachmentTool,
 );

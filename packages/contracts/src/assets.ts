@@ -102,6 +102,7 @@ export const AssetCreateUrlResult = Schema.Struct({
 export type AssetCreateUrlResult = typeof AssetCreateUrlResult.Type;
 
 export const ATTACHMENT_UPLOAD_URL_TTL_MS = 10 * 60_000;
+export const PULL_REQUEST_ATTACHMENT_MAX_BYTES = 100 * 1024 * 1024;
 
 const ImageAttachmentCreateUploadUrlInput = Schema.Struct({
   type: Schema.optionalKey(Schema.Literal("image")),
@@ -123,9 +124,20 @@ const FileAttachmentCreateUploadUrlInput = Schema.Struct({
   ),
 });
 
+const PullRequestAttachmentCreateUploadUrlInput = Schema.Struct({
+  type: Schema.Literal("pull-request"),
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
+  mimeType: TrimmedNonEmptyString.check(Schema.isMaxLength(100)),
+  sizeBytes: NonNegativeInt.check(
+    Schema.isGreaterThanOrEqualTo(1),
+    Schema.isLessThanOrEqualTo(PULL_REQUEST_ATTACHMENT_MAX_BYTES),
+  ),
+});
+
 export const AttachmentCreateUploadUrlInput = Schema.Union([
   ImageAttachmentCreateUploadUrlInput,
   FileAttachmentCreateUploadUrlInput,
+  PullRequestAttachmentCreateUploadUrlInput,
 ]);
 export type AttachmentCreateUploadUrlInput = typeof AttachmentCreateUploadUrlInput.Type;
 
