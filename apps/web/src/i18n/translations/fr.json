@@ -13043,5 +13043,6 @@
   "95435f0b59cb2193": "Aperçu audio",
   "4a12506938295127": "Saisissez d’abord {field}.",
   "5807c08e225c6b3d": "Télécharger",
-  "0d50b5bfe7151ece": "Impossible de télécharger le fichier"
+  "0d50b5bfe7151ece": "Impossible de télécharger le fichier",
+  "1e4248d235c665e5": "Les totaux d'Antigravity omettent les appels de sous-agents enregistrés uniquement dans les transcriptions."
 }
