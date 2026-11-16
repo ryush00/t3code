@@ -32,6 +32,8 @@ import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff"
 import { usePullRequestPermissions } from "./usePullRequestPermissions";
 import { pullRequestReviewKey } from "./pullRequestReviewDrafts";
 import { PullRequestCompletionSuggestions } from "./PullRequestCompletionSuggestions";
+import { PullRequestAttachButton } from "./PullRequestAttachButton";
+import { usePullRequestAttachmentUpload } from "./usePullRequestAttachmentUpload";
 import { usePullRequestCompletions } from "./usePullRequestCompletions";
 
 export function PullRequestDiscussionScreen({
@@ -73,6 +75,15 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
     value: body,
     onChangeValue: setBody,
     support: detail.data?.capabilities ?? null,
+  });
+  const attachments = usePullRequestAttachmentUpload({
+    environmentId: target.environmentId,
+    reference: target.input,
+    provider: detail.data?.provider,
+    value: body,
+    updateValue: setBody,
+    selection: completions.currentSelection,
+    onPlaceCursor: completions.placeCursor,
   });
   const [extra, setExtra] = useState<readonly PullRequestThreadComment[]>([]);
   const [cursor, setCursor] = useState<string | null | undefined>();
@@ -295,6 +306,16 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
               onLayout={(event) => setComposerHeight(event.nativeEvent.layout.height)}
               className="flex-row items-end gap-1 p-1"
             >
+              {permissions.canAttach ? (
+                <PullRequestAttachButton
+                  variant="icon"
+                  disabled={busy}
+                  uploading={attachments.uploading}
+                  uploadingCount={attachments.uploadingCount}
+                  onPickMedia={attachments.pickMedia}
+                  onPickFiles={attachments.pickFiles}
+                />
+              ) : null}
               <TextInput
                 accessibilityLabel="Discussion reply"
                 selection={completions.selection}
@@ -313,7 +334,7 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
                 <Button
                   label={busy ? "Posting…" : "Reply"}
                   tone="contrast"
-                  disabled={busy || !body.trim()}
+                  disabled={busy || attachments.uploading || !body.trim()}
                   onPress={() => void post()}
                 />
               </View>
