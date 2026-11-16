@@ -5613,5 +5613,12 @@
   "8d545d54c0a9e950": "Oculta los comandos, ediciones y búsquedas que ejecutan los agentes. Ocultar las correctas mantiene los fallos. Zen solo muestra las respuestas finales. Las aprobaciones, preguntas y errores siempre se muestran.",
   "99d51127f573296b": "Otra cuenta",
   "8ec2c57414669b79": "Conecta un segundo espacio de trabajo o usuario de {tracker}.",
-  "1e4248d235c665e5": "Los totales de Antigravity omiten las llamadas a subagentes registradas solo en las transcripciones."
+  "1e4248d235c665e5": "Los totales de Antigravity omiten las llamadas a subagentes registradas solo en las transcripciones.",
+  "c810e443033ac25a": "''{name}'' está vacío.",
+  "7ce0e7e30613750d": "GitHub no admite ''{name}''. Adjunta archivos PNG, JPEG, GIF, WebP, SVG, MP4, MOV o WebM.",
+  "9aa2077538cb3443": "Subiendo {count} archivos…",
+  "167ee73b0ebb4806": "Subiendo archivo…",
+  "5f31c62bdf26a7be": "Adjuntar archivo",
+  "48223896dc3bab24": "No se pudo abrir la fototeca",
+  "d1aa0d093eca5e03": "No se pudo abrir el selector de archivos"
 }

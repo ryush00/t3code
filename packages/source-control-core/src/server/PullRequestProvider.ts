@@ -345,6 +345,11 @@ export interface ProviderFilterOptionPage<A> {
   readonly truncated: boolean;
 }
 
+export interface ProviderUploadedAttachment {
+  readonly url: string;
+  readonly markdown: string;
+}
+
 export interface ProviderRepositoryRef {
   readonly cwd: string;
   readonly repository: string;
@@ -705,4 +710,13 @@ export interface PullRequestProviderApi {
       readonly resolved: boolean;
     },
   ) => Effect.Effect<void, PullRequestProviderError>;
+
+  readonly uploadAttachment?: (
+    input: ProviderRepositoryRef & {
+      readonly filePath: string;
+      readonly fileName: string;
+      readonly mimeType?: string | undefined;
+      readonly alt?: string | undefined;
+    },
+  ) => Effect.Effect<ProviderUploadedAttachment, PullRequestProviderError>;
 }
