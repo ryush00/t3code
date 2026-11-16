@@ -350,8 +350,8 @@ jobs:
             fi
             echo
             echo "### Install"
-            echo "- Windows and Linux installs on the Nightly update channel update themselves."
-            echo "- macOS builds are ad hoc signed and do not update themselves. Install the \`.dmg\` for your architecture, then run \`xattr -cr \"/Applications/T3 Code (Nightly).app\"\` once."
+            echo "- Installs on the Nightly update channel update themselves."
+            echo "- If a macOS update fails on a code signature check, the installed build was signed differently; install this \`.dmg\` over it once."
           } > release-notes.md
           cat release-notes.md
           cat release-notes.md >> "$GITHUB_STEP_SUMMARY"
