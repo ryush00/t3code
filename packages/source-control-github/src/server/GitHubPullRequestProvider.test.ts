@@ -177,10 +177,40 @@ describe("gitHubViewerPermissions", () => {
       comment: true,
       resolve: true,
       stackRebase: true,
+      uploadAttachment: true,
       verdicts: ["comment", "approve", "request-changes"],
       requestReviewers: true,
       labels: true,
     });
+  });
+
+  it("withholds attachment upload on GitHub Enterprise Server even with write access", () => {
+    expect(
+      gitHubViewerPermissions(
+        {
+          canWrite: true,
+          canDeleteBranch: true,
+          canTriage: true,
+          canUpdate: true,
+          didAuthor: false,
+          autoMergeAllowed: true,
+        },
+        "github.example.com",
+      ).uploadAttachment,
+    ).toBe(false);
+    expect(
+      gitHubViewerPermissions(
+        {
+          canWrite: true,
+          canDeleteBranch: true,
+          canTriage: true,
+          canUpdate: true,
+          didAuthor: false,
+          autoMergeAllowed: true,
+        },
+        "acme.ghe.com",
+      ).uploadAttachment,
+    ).toBe(true);
   });
 
   it("leaves a passer-by on a repository they can only read nothing but the review", () => {
@@ -196,6 +226,7 @@ describe("gitHubViewerPermissions", () => {
       actions: [],
       comment: true,
       resolve: false,
+      uploadAttachment: false,
       verdicts: ["comment", "approve", "request-changes"],
       requestReviewers: false,
       labels: false,
@@ -228,6 +259,7 @@ describe("gitHubViewerPermissions", () => {
       actions: ["ready", "draft", "close", "reopen"],
       comment: true,
       resolve: true,
+      uploadAttachment: false,
       verdicts: ["comment"],
       requestReviewers: false,
       labels: false,
@@ -249,6 +281,7 @@ describe("gitHubViewerPermissions", () => {
         actions: ["ready", "draft", "close", "reopen"],
         comment: true,
         resolve: false,
+        uploadAttachment: false,
         verdicts: ["comment", "approve", "request-changes"],
         requestReviewers: false,
         labels: false,

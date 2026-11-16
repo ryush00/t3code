@@ -8,6 +8,7 @@ import * as Layer from "effect/Layer";
 import { definition } from "../shared/definition.ts";
 
 import * as GitLabCli from "./GitLabCli.ts";
+import * as GitLabAttachmentUpload from "./gitLabAttachmentUpload.ts";
 import * as GitLabCredentials from "./GitLabCredentials.ts";
 import * as GitLabMediaFetch from "./gitLabMediaFetch.ts";
 import * as GitLabPullRequestCli from "./GitLabPullRequestCli.ts";
@@ -23,7 +24,10 @@ const services = Layer.merge(
 const makeInstance = Effect.all({
   sourceControl: GitLabSourceControlProvider.make,
   discovery: Effect.succeed(GitLabSourceControlProvider.discovery),
-  pullRequests: GitLabPullRequestProvider.make,
+  pullRequests: Effect.all({
+    base: GitLabPullRequestProvider.make,
+    uploadAttachment: GitLabAttachmentUpload.make,
+  }).pipe(Effect.map(({ base, uploadAttachment }) => ({ ...base, uploadAttachment }))),
   issues: GitLabIssueTracker.make,
   fetchMedia: GitLabMediaFetch.make,
 });

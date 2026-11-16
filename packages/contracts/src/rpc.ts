@@ -241,6 +241,8 @@ import {
   PullRequestThreadResolutionInput,
   PullRequestUnavailableError,
   PullRequestUpdateInput,
+  PullRequestUploadAttachmentInput,
+  PullRequestUploadAttachmentResult,
 } from "./pullRequest.ts";
 import {
   RelayClientInstallFailedError,
@@ -625,6 +627,7 @@ export const WS_METHODS = {
   pullRequestsRequestReviewers: "pullRequests.requestReviewers",
   pullRequestsLabelCandidates: "pullRequests.labelCandidates",
   pullRequestsSetLabels: "pullRequests.setLabels",
+  pullRequestsUploadAttachment: "pullRequests.uploadAttachment",
 
   // Issue tracking methods
   issuesList: "issues.list",
@@ -1234,6 +1237,12 @@ const WsPullRequestsUpdateRpc = Rpc.make(WS_METHODS.pullRequestsUpdate, {
 const WsPullRequestsCommentRpc = Rpc.make(WS_METHODS.pullRequestsComment, {
   payload: PullRequestCommentInput,
   success: Schema.Void,
+  error: PullRequestRpcError,
+});
+
+const WsPullRequestsUploadAttachmentRpc = Rpc.make(WS_METHODS.pullRequestsUploadAttachment, {
+  payload: PullRequestUploadAttachmentInput,
+  success: PullRequestUploadAttachmentResult,
   error: PullRequestRpcError,
 });
 
@@ -2367,6 +2376,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsPullRequestsRequestReviewersRpc,
   WsPullRequestsLabelCandidatesRpc,
   WsPullRequestsSetLabelsRpc,
+  WsPullRequestsUploadAttachmentRpc,
   WsSourceControlLookupRepositoryRpc,
   WsSourceControlCloneRepositoryRpc,
   WsSourceControlPublishRepositoryRpc,
