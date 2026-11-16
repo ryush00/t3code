@@ -291,20 +291,70 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_SHA: ${{ needs.prepare.outputs.ref }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+          UPSTREAM_REPO: pingdotgg/t3code
         run: |
           set -euo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/compare/main...${RELEASE_SHA}" > "$RUNNER_TEMP/fork-compare.json"
+          curr_base="$(jq -r '.merge_base_commit.sha' "$RUNNER_TEMP/fork-compare.json")"
+
+          prev_tag="$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=20" \
+            --jq '[.[] | select(.draft == false and .tag_name != env.RELEASE_TAG and (.tag_name | contains("-nightly.")))][0].tag_name // empty' || true)"
+          prev_base=""
+          if [[ -n "$prev_tag" ]]; then
+            prev_base="$(gh api "repos/${GITHUB_REPOSITORY}/compare/main...${prev_tag}" \
+              --jq '.merge_base_commit.sha // empty' 2>/dev/null || true)"
+          fi
+
           {
-            echo "Nightly build of the \`fork\` branch: upstream \`pingdotgg/t3code\` main plus the patches below."
+            echo "Nightly build of the \`fork\` branch (upstream \`${UPSTREAM_REPO}\` @ \`${curr_base:0:9}\`)."
             echo
             echo "### Fork patches"
-            gh api "repos/${GITHUB_REPOSITORY}/compare/main...${RELEASE_SHA}" \
-              --jq '.commits[] | "- " + (.commit.message | split("\n")[0]) + " (" + .sha[0:9] + ")"'
+            if [[ "$(jq '.commits | length' "$RUNNER_TEMP/fork-compare.json")" -eq 0 ]]; then
+              echo "- None."
+            else
+              jq -r --arg up "$UPSTREAM_REPO" '
+                .commits[]
+                | (.commit.message | split("\n")[0]) as $subject
+                | (if (.commit.message | contains("https://github.com/" + $up + "/pull/"))
+                   then ($subject | gsub("\\(#(?<n>[0-9]+)\\)"; "(" + $up + "#\(.n))"))
+                   else $subject
+                   end) as $formatted
+                | "- " + $formatted + " (" + .sha[0:9] + ")"
+              ' "$RUNNER_TEMP/fork-compare.json"
+            fi
+            echo
+            if [[ -z "$prev_tag" || -z "$prev_base" ]]; then
+              echo "### Upstream changes"
+              echo "- Initial upstream base (\`${curr_base:0:9}\`)."
+            elif [[ "$prev_base" == "$curr_base" ]]; then
+              echo "### Upstream changes (since ${prev_tag})"
+              echo "- No new upstream commits (\`${curr_base:0:9}\`)."
+            else
+              echo "### Upstream changes (since ${prev_tag})"
+              if gh api "repos/${GITHUB_REPOSITORY}/compare/${prev_base}...${curr_base}" > "$RUNNER_TEMP/upstream-compare.json" 2>/dev/null \
+                && jq -e '.status == "ahead" and (.commits | length) > 0' "$RUNNER_TEMP/upstream-compare.json" >/dev/null; then
+                jq -r --arg up "$UPSTREAM_REPO" '
+                  .commits[]
+                  | (.commit.message | split("\n")[0] | gsub("\\(#(?<n>[0-9]+)\\)"; "(" + $up + "#\(.n))")) as $formatted
+                  | "- " + $formatted + " (" + .sha[0:9] + ")"
+                ' "$RUNNER_TEMP/upstream-compare.json"
+                total="$(jq -r '.total_commits' "$RUNNER_TEMP/upstream-compare.json")"
+                shown="$(jq -r '.commits | length' "$RUNNER_TEMP/upstream-compare.json")"
+                if [[ "$total" -gt "$shown" ]]; then
+                  echo "- ...and $((total - shown)) more commits (https://github.com/${UPSTREAM_REPO}/compare/${prev_base:0:12}...${curr_base:0:12})."
+                fi
+              else
+                echo "- https://github.com/${UPSTREAM_REPO}/compare/${prev_base:0:12}...${curr_base:0:12}"
+              fi
+            fi
             echo
             echo "### Install"
             echo "- Windows and Linux installs on the Nightly update channel update themselves."
             echo "- macOS builds are ad hoc signed and do not update themselves. Install the \`.dmg\` for your architecture, then run \`xattr -cr \"/Applications/T3 Code (Nightly).app\"\` once."
           } > release-notes.md
           cat release-notes.md
+          cat release-notes.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Verify required Windows and macOS release assets
         shell: bash
