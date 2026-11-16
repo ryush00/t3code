@@ -77,7 +77,11 @@ import {
 } from "@t3tools/provider-core/server/driver";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import { withInstanceIdentity } from "@t3tools/provider-core/server/instanceIdentity";
-import { discoverAntigravitySkills, resolveAntigravityUserHome } from "./AntigravitySkills.ts";
+import {
+  discoverAntigravitySkills,
+  prepareAntigravityPluginSkills,
+  resolveAntigravityUserHome,
+} from "./AntigravitySkills.ts";
 
 const DRIVER = ProviderDriverKind.make("antigravity");
 const decodeSettings = Schema.decodeSync(AntigravitySettings);
@@ -205,7 +209,9 @@ export const AntigravityDriver: ProviderDriver<
     const makeRuntime = Effect.fn("AntigravityDriver.makeRuntime")(function* (
       input: AntigravityAdapterV2RuntimeInput,
     ): Effect.fn.Return<
-      AcpSessionRuntime.AcpSessionRuntime["Service"],
+      AcpSessionRuntime.AcpSessionRuntime["Service"] & {
+        readonly clientFileRoots: ReadonlyArray<string>;
+      },
       AcpErrors.AcpError | ProviderSetupError,
       Scope.Scope
     > {
@@ -279,8 +285,24 @@ export const AntigravityDriver: ProviderDriver<
         threadEnvironment === undefined
           ? processEnvironment
           : { ...processEnvironment, ...threadEnvironment };
+      const pluginDirectories = yield* prepareAntigravityPluginSkills({
+        userHome,
+        runtimeTempDirectory,
+      }).pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+        Effect.catch((cause) =>
+          Effect.logWarning("Antigravity plugin skills are unavailable.", {
+            errorTag: cause._tag,
+          }).pipe(Effect.as([])),
+        ),
+      );
       const runtime = yield* makeAntigravityAcpRuntime({
         ...runtimeInput,
+        additionalDirectories: [
+          ...(runtimeInput.additionalDirectories ?? []),
+          ...pluginDirectories,
+        ],
         runtimeVersion: executable.version,
         authMethod: auth.authMethod,
         childProcessSpawner: spawner,
@@ -296,6 +318,7 @@ export const AntigravityDriver: ProviderDriver<
       }).pipe(Effect.provideService(SecureRandom.SecureRandom, random));
       return {
         ...runtime,
+        clientFileRoots: pluginDirectories,
         setMode: Effect.fn("AntigravityDriver.setMode")(function* (modeId: string) {
           const availableModeIds = antigravityAdvertisedModeIds(
             yield* runtime.getModeState,
