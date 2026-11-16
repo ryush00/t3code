@@ -201,6 +201,14 @@ Where you can edit a description, you can also tick its checkboxes from the Summ
 (the Overview tab on mobile).
 GitLab calls these merge requests.
 
+When editing a description, commenting, or submitting a review on GitHub or GitLab, you can attach
+files directly into the Markdown (paste, drop, or choose files on web and desktop; choose from your
+photo library or files on mobile). GitHub (`github.com` and `*.ghe.com`, not GitHub Enterprise
+Server) requires write access to the repository and accepts PNG, JPEG, GIF, WebP, and SVG images up
+to 10 MB and MP4, MOV, and WebM videos up to 100 MB. GitLab requires Reporter access or higher and
+accepts files up to 100 MB. From a terminal, `t3 pr attach <file...>` uploads local files for the
+current repository and prints the Markdown to paste into a pull request or merge request.
+
 A link to part of a pull request opens that part: a comment or review is marked in the activity, a
 changed-line link opens the file at those lines, a checks link opens the checks, and a commit link
 opens that commit's changes. On web and desktop, hovering a comment or commit link previews it.

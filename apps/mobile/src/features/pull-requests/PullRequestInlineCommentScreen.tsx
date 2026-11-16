@@ -16,6 +16,8 @@ import { reviewPositionLabel } from "./pullRequestDiffComments";
 import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff";
 import { usePullRequestPermissions } from "./usePullRequestPermissions";
 import { PullRequestCompletionSuggestions } from "./PullRequestCompletionSuggestions";
+import { PullRequestAttachButton } from "./PullRequestAttachButton";
+import { usePullRequestAttachmentUpload } from "./usePullRequestAttachmentUpload";
 import { usePullRequestCompletions } from "./usePullRequestCompletions";
 
 export type InlineCommentParams = PullRequestParams & {
@@ -41,6 +43,16 @@ export function PullRequestInlineCommentScreen({ route }: StaticScreenProps<Inli
     value: body,
     onChangeValue: setBody,
     support: detail.data?.capabilities ?? null,
+  });
+  const target = pullRequestTarget(params);
+  const attachments = usePullRequestAttachmentUpload({
+    environmentId: target.environmentId,
+    reference: target.input,
+    provider: detail.data?.provider,
+    value: body,
+    updateValue: (updater) => setBody((current) => updater(current ?? saved?.body ?? "")),
+    selection: completions.currentSelection,
+    onPlaceCursor: completions.placeCursor,
   });
   useFocusEffect(refreshDetail);
   const permissions = usePullRequestPermissions(params, detail.data);
@@ -95,6 +107,7 @@ export function PullRequestInlineCommentScreen({ route }: StaticScreenProps<Inli
           disabled={
             !store.ready ||
             !body.trim() ||
+            attachments.uploading ||
             detail.isPending ||
             detail.error !== null ||
             Boolean(stale) ||
@@ -127,6 +140,15 @@ export function PullRequestInlineCommentScreen({ route }: StaticScreenProps<Inli
         className="min-h-32 rounded-[20px] bg-grouped-card p-4 text-base text-foreground"
         style={{ textAlignVertical: "top" }}
       />
+      {permissions.canAttach && permissions.canInlineComment && !stale ? (
+        <PullRequestAttachButton
+          disabled={!store.ready || busy}
+          uploading={attachments.uploading}
+          uploadingCount={attachments.uploadingCount}
+          onPickMedia={attachments.pickMedia}
+          onPickFiles={attachments.pickFiles}
+        />
+      ) : null}
       <Text className="text-xs text-foreground-muted">
         Saved comments are private until you submit your review.
       </Text>
