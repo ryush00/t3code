@@ -5723,5 +5723,12 @@
   "3ee30a50b70fffab": "Zurückgezogen von {by}: {reason}",
   "201490988858b511": "zurückgezogen von {by}",
   "46d614fa7b4bf1e5": "Workflow-Ausführungen",
-  "1e4248d235c665e5": "Antigravity-Summen lassen Subagent-Aufrufe aus, die nur in Transkripten erfasst sind."
+  "1e4248d235c665e5": "Antigravity-Summen lassen Subagent-Aufrufe aus, die nur in Transkripten erfasst sind.",
+  "c810e443033ac25a": "''{name}'' ist leer.",
+  "7ce0e7e30613750d": "''{name}'' wird von GitHub nicht unterstützt. Hänge PNG-, JPEG-, GIF-, WebP-, SVG-, MP4-, MOV- oder WebM-Dateien an.",
+  "9aa2077538cb3443": "{count} Dateien werden hochgeladen…",
+  "167ee73b0ebb4806": "Datei wird hochgeladen…",
+  "5f31c62bdf26a7be": "Datei anhängen",
+  "48223896dc3bab24": "Fotomediathek konnte nicht geöffnet werden",
+  "d1aa0d093eca5e03": "Dateiauswahl konnte nicht geöffnet werden"
 }

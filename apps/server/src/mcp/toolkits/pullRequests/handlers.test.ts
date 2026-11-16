@@ -24,6 +24,7 @@ import * as Effect from "effect/Effect";
 import * as Base64Url from "effect/encoding/Base64Url";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import { McpSchema, type Tool } from "effect/ai";
@@ -36,9 +37,9 @@ import {
   v2PullRequestThread,
 } from "../../../orchestration-v2/testkit/pullRequestFixtures.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
+import * as PullRequestService from "../../../pullRequest/PullRequestService.ts";
 import * as PullRequestWatchService from "../../../pullRequest/PullRequestWatchService.ts";
 import * as PullRequestReviewGuideService from "../../../pullRequest/PullRequestReviewGuideService.ts";
-import * as PullRequestService from "../../../pullRequest/PullRequestService.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
 import * as McpClientInput from "../../McpClientInput.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -169,6 +170,9 @@ const makeHarness = Effect.fn("makePullRequestsToolkitHarness")(function* (
 ) {
   const commands = yield* Ref.make<ReadonlyArray<OrchestrationCommand>>([]);
   const guideRequests = yield* Ref.make<ReadonlyArray<PullRequestRef>>([]);
+  const uploadRequests = yield* Ref.make<
+    ReadonlyArray<PullRequestService.PullRequestUploadFileInput>
+  >([]);
   const thread = options.thread === undefined ? makeThread([]) : options.thread;
   const project = options.project === undefined ? makeProject() : options.project;
   const dispatch: Orchestrator.OrchestratorV2Shape["dispatch"] = (command) =>
@@ -185,6 +189,19 @@ const makeHarness = Effect.fn("makePullRequestsToolkitHarness")(function* (
     });
   const layerDependencies = Layer.mergeAll(
     Layer.mock(PullRequestWatchService.PullRequestWatchService)({}),
+    Layer.mock(PullRequestService.PullRequestService)({
+      addressedProject: () => Effect.succeed(project ?? undefined),
+      uploadAttachment: (input) =>
+        Ref.update(uploadRequests, (recorded) => [...recorded, input]).pipe(
+          Effect.as({
+            url: `https://uploads.example.com/${input.fileName}`,
+            markdown: `![${input.alt ?? input.fileName}](https://uploads.example.com/${input.fileName})`,
+            name: input.fileName,
+            mimeType: "image/png",
+          }),
+        ),
+      ...options.pullRequests,
+    }),
     Layer.mock(ProjectService.ProjectService)({
       getShell: () => Effect.succeed(Option.fromNullishOr(project)),
       listShells: () => Effect.succeed(options.projects ?? (project ? [project] : [])),
@@ -212,11 +229,8 @@ const makeHarness = Effect.fn("makePullRequestsToolkitHarness")(function* (
         Effect.succeed(id === thread?.id ? v2PullRequestThread(thread) : null),
       dispatch,
     }),
-    Layer.mock(PullRequestService.PullRequestService)({
-      addressedProject: () => Effect.succeed(project ?? undefined),
-      ...options.pullRequests,
-    }),
     Layer.mock(GitManager.GitManager)(options.git ?? {}),
+    Path.layer,
     Layer.succeed(SecureRandom.SecureRandom, testCrypto),
     ServerSettings.layerTest({}, options.managedPolicy),
     McpToolAccessTestkit.liveThreadsLayer,
@@ -242,7 +256,7 @@ const makeHarness = Effect.fn("makePullRequestsToolkitHarness")(function* (
       Effect.provideService(McpInvocationContext.McpInvocationContext, invocation(capabilities)),
       Effect.provide(layerDependencies),
     );
-  return { commands, guideRequests, call };
+  return { commands, guideRequests, uploadRequests, call };
 });
 
 describe("pull request toolkit handlers", () => {
@@ -839,6 +853,49 @@ describe("pull request guide tools", () => {
         "project-azure",
       ]);
     }),
+  );
+
+  it.effect(
+    "resolves relative attachment paths against the caller thread worktree and routes to the matching repository project",
+    () =>
+      Effect.gen(function* () {
+        const gitlabProject = {
+          ...makeProject({
+            canonicalKey: "gitlab.example.com/group/app",
+            locator: {
+              source: "git-remote",
+              remoteName: "origin",
+              remoteUrl: "https://gitlab.example.com/group/app.git",
+            },
+            provider: SourceControlProviderKind.make("gitlab"),
+            displayName: "group/app",
+            owner: "group",
+            name: "app",
+          }),
+          id: ProjectId.make("project-gitlab"),
+        };
+        const harness = yield* makeHarness({
+          thread: { ...makeThread([]), worktreePath: "/workspace/worktree-1" },
+          projects: [makeProject(), gitlabProject],
+        });
+        const result = yield* harness.call("upload_pull_request_attachment", {
+          path: "artifacts/before.png",
+          alt: "Before fix",
+          url: "https://gitlab.example.com/group/app/-/merge_requests/42",
+        });
+        expect(result.markdown).toBe("![Before fix](https://uploads.example.com/before.png)");
+        expect(yield* Ref.get(harness.uploadRequests)).toEqual([
+          {
+            projectId: "project-gitlab",
+            repository: "group/app",
+            host: "gitlab.example.com",
+            number: 42,
+            filePath: "/workspace/worktree-1/artifacts/before.png",
+            fileName: "before.png",
+            alt: "Before fix",
+          },
+        ]);
+      }),
   );
 });
 

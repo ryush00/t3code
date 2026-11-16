@@ -82,9 +82,23 @@ vi.mock("../../state/query", () => ({
     refresh: () => {},
   }),
 }));
-vi.mock("./usePullRequestDiff", () => ({ pullRequestTarget: () => null }));
+vi.mock("./usePullRequestDiff", () => ({
+  pullRequestTarget: () => ({
+    environmentId: "environment",
+    input: { projectId: "project", repository: "owner/repo", number: 1 },
+  }),
+}));
 vi.mock("./usePullRequestPermissions", () => ({
   usePullRequestPermissions: () => ({ canInlineComment: true }),
+}));
+vi.mock("./PullRequestAttachButton", () => ({ PullRequestAttachButton: () => null }));
+vi.mock("./usePullRequestAttachmentUpload", () => ({
+  usePullRequestAttachmentUpload: () => ({
+    uploading: false,
+    uploadingCount: 0,
+    pickMedia: async () => {},
+    pickFiles: async () => {},
+  }),
 }));
 vi.mock("./PullRequestCompletionSuggestions", () => ({
   PullRequestCompletionSuggestions: () => null,
