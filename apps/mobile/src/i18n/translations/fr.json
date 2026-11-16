@@ -5691,5 +5691,6 @@
   "1a1beecff68a6e61": "Vérifier le compte Google",
   "99451a5d2d40440f": "Retirée par {by}.",
   "3ee30a50b70fffab": "Retirée par {by} : {reason}",
-  "201490988858b511": "retirée par {by}"
+  "201490988858b511": "retirée par {by}",
+  "1e4248d235c665e5": "Les totaux d'Antigravity omettent les appels de sous-agents enregistrés uniquement dans les transcriptions."
 }
