@@ -82,6 +82,7 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as PullRequestWatchReactor from "./PullRequestWatchReactor.ts";
 import { PULL_REQUEST_WATCH_WAKE_LIMIT } from "./pullRequestWatch.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
+import * as PullRequestWatchService from "../pullRequest/PullRequestWatchService.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as RuntimeLayer from "./runtimeLayer.ts";
@@ -4775,6 +4776,125 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       assert.deepEqual(yield* summaries, ["#12: checks passed", "#12: checks passed"]);
       yield* watch(false, "end");
     }),
+  );
+
+  it.effect.each([
+    ["success", "#12: checks passed"],
+    ["failure", "#12: checks failed"],
+  ] as const)(
+    "wakes when a pending check settles (%s) between watch registration and the first sweep",
+    ([outcome, expected]) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const threadId = ThreadId.make(`runtime-pull-request-watch-fast-${outcome}`);
+        const projectId = ProjectId.make(`pr-watch-fast-project-${outcome}`);
+        yield* seedProject({
+          projectId,
+          title: "Watch fast checks",
+          workspaceRoot: "/workspace/watch-fast",
+          defaultModelSelection: null,
+          createdAt: "2026-10-01T00:00:00.000Z",
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`pr-watch-fast-create-${outcome}`),
+          threadId,
+          projectId,
+          title: "Watch fast checks",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+        });
+
+        const headSha = "2aaf97e7c8";
+        let status: PullRequestCheck["status"] = "pending";
+        const host = Layer.mergeAll(
+          NodeServices.layer,
+          NodeCrypto.layer,
+          Layer.mock(ProjectService.ProjectService)({
+            getShell: () => Effect.succeedNone,
+          }),
+          Layer.mock(PullRequestService.PullRequestService)({
+            invalidate: () => Effect.void,
+            summary: (input) =>
+              Effect.sync(() => ({
+                provider: SourceControlProviderKind.make("github"),
+                projectId: input.projectId,
+                repository: input.repository,
+                number: input.number,
+                title: `PR #${input.number}`,
+                url: `https://github.com/${input.repository}/pull/${input.number}`,
+                state: "open" as const,
+                headBranch: "feature",
+                baseBranch: "main",
+                updatedAt: "2026-10-02T12:00:00.000Z",
+                headSha,
+                checksState:
+                  status === "pending"
+                    ? ("pending" as const)
+                    : status === "success"
+                      ? ("passing" as const)
+                      : ("failing" as const),
+              })),
+            detail: () =>
+              Effect.sync(() => ({
+                ...watchedPullRequestDetail({
+                  projectId,
+                  number: 12,
+                  at: "2026-10-02T12:00:00.000Z",
+                }),
+                headSha,
+                checks: [
+                  {
+                    name: "test",
+                    status,
+                    description: null,
+                    url: "https://ci.example/test/34258",
+                    required: true,
+                  },
+                ],
+              })),
+            activity: () =>
+              Effect.succeed({
+                comments: [],
+                commentCount: 0,
+                commentsTruncated: false,
+                reviewThreads: [],
+                commits: [],
+              }),
+          }),
+        );
+
+        const watches = yield* PullRequestWatchService.PullRequestWatchService.pipe(
+          Effect.provide(PullRequestWatchService.layer.pipe(Layer.provide(host))),
+        );
+        yield* watches.setWatching({
+          threadId,
+          target: { url: "https://github.com/pingdotgg/t3code/pull/12" },
+          watching: true,
+        });
+
+        status = outcome;
+        const reactor = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
+        yield* reactor.sweep;
+        yield* worker.drain();
+
+        const { messages } = yield* orchestrator.getThreadRecords(threadId, ["messages"]);
+        assert.deepEqual(
+          messages.flatMap((message) => message.notification?.summary ?? []),
+          [expected],
+        );
+        yield* watches.setWatching({
+          threadId,
+          target: { url: "https://github.com/pingdotgg/t3code/pull/12" },
+          watching: false,
+        });
+      }),
   );
 
   it.effect.each([
