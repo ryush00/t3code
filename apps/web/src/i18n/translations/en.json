@@ -12990,5 +12990,6 @@
   "201490988858b511": "withdrawn by {by}",
   "99451a5d2d40440f": "Withdrawn by {by}.",
   "3ee30a50b70fffab": "Withdrawn by {by}: {reason}",
-  "92e129bf413a1220": "withdrawn"
+  "92e129bf413a1220": "withdrawn",
+  "1e4248d235c665e5": "Antigravity totals leave out subagent calls recorded only in transcripts."
 }
