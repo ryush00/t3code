@@ -28,7 +28,7 @@
 - [fork-release.yml](.github/workflows/fork-release.yml)이 `fork` 브랜치를 빌드해 GitHub 프리릴리즈로 올린다. 태그를 손으로 만들지 않는다.
 - 앱 이름은 "T3 Code (Nightly)"지만 앱 ID와 데이터 폴더는 정식 빌드와 같다. 공식 빌드와 동시에 띄우지 않는다.
 - 자동 업데이트 피드는 빌드한 저장소(`GITHUB_REPOSITORY`)를 가리키므로 포크 릴리즈만 따라간다. Windows와 Linux는 Nightly 채널에서 자동 업데이트된다.
-- macOS 빌드는 서명·공증이 없다. 새 `.dmg`를 직접 설치하고 `xattr -cr "/Applications/T3 Code (Nightly).app"`을 실행한다.
+- macOS 빌드는 Developer ID 없이 임시(ad hoc) 서명만 하고 공증하지 않는다. 그래서 자동 업데이트가 되지 않는다. 새 `.dmg`를 직접 설치하고, 처음 열 때 `xattr -cr "/Applications/T3 Code (Nightly).app"`을 실행하거나 시스템 설정의 "그래도 열기"로 통과시킨다.
 - `t3` CLI의 자체 업데이트는 여전히 업스트림 릴리즈를 본다.
 
 ## 자동 동기화
