@@ -646,6 +646,7 @@ function toCheckEntries(raw: ReadonlyArray<CheckFields> | null | undefined): Rea
   readonly check: PullRequestCheck;
   readonly workflowName: string | null;
   readonly at: string | null;
+  readonly event: string | null;
 }> {
   const lineageOf = (run: WorkflowRunFields) => `${run.workflow.id} ${run.event}`;
   const newestRunNumber = new Map<string, number>();
@@ -680,6 +681,7 @@ function toCheckEntries(raw: ReadonlyArray<CheckFields> | null | undefined): Rea
           ...(typeof check.isRequired === "boolean" ? { required: check.isRequired } : {}),
         },
         workflowName: trimmed(check.workflowName),
+        event: trimmed(check.workflowRun?.event),
         at:
           status === "pending"
             ? STILL_RUNNING
