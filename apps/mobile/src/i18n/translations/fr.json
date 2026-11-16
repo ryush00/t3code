@@ -5296,5 +5296,12 @@
   "3328503592789bed": "Zen",
   "856812e7e1fc445e": "Appels d’outils dans la discussion",
   "8d545d54c0a9e950": "Masque les commandes, modifications et recherches lancées par les agents. Masquer les réussis garde les échecs. Zen n’affiche que les réponses finales. Les approbations, questions et erreurs s’affichent toujours.",
-  "1e4248d235c665e5": "Les totaux d'Antigravity omettent les appels de sous-agents enregistrés uniquement dans les transcriptions."
+  "1e4248d235c665e5": "Les totaux d'Antigravity omettent les appels de sous-agents enregistrés uniquement dans les transcriptions.",
+  "c810e443033ac25a": "''{name}'' est vide.",
+  "7ce0e7e30613750d": "''{name}'' n'est pas pris en charge par GitHub. Joignez des fichiers PNG, JPEG, GIF, WebP, SVG, MP4, MOV ou WebM.",
+  "9aa2077538cb3443": "Envoi de {count} fichiers…",
+  "167ee73b0ebb4806": "Envoi du fichier…",
+  "5f31c62bdf26a7be": "Joindre un fichier",
+  "48223896dc3bab24": "Impossible d'ouvrir la photothèque",
+  "d1aa0d093eca5e03": "Impossible d'ouvrir le sélecteur de fichiers"
 }

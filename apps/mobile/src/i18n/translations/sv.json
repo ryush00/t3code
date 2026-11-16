@@ -5302,5 +5302,12 @@
   "3328503592789bed": "Zen",
   "856812e7e1fc445e": "Verktygsanrop i chatten",
   "8d545d54c0a9e950": "Dölj kommandon, redigeringar och sökningar som agenter kör. Dölj lyckade behåller misslyckanden. Zen visar bara slutliga svar. Godkännanden, frågor och fel visas alltid.",
-  "1e4248d235c665e5": "Antigravitys summor utelämnar subagentanrop som bara finns i transkript."
+  "1e4248d235c665e5": "Antigravitys summor utelämnar subagentanrop som bara finns i transkript.",
+  "c810e443033ac25a": "''{name}'' är tom.",
+  "7ce0e7e30613750d": "''{name}'' stöds inte på GitHub. Bifoga PNG-, JPEG-, GIF-, WebP-, SVG-, MP4-, MOV- eller WebM-filer.",
+  "9aa2077538cb3443": "Laddar upp {count} filer…",
+  "167ee73b0ebb4806": "Laddar upp fil…",
+  "5f31c62bdf26a7be": "Bifoga fil",
+  "48223896dc3bab24": "Det gick inte att öppna bildbiblioteket",
+  "d1aa0d093eca5e03": "Det gick inte att öppna filväljaren"
 }

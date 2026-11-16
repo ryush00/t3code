@@ -31,10 +31,12 @@ import type {
   GitHubWorkflowRunApproval,
 } from "./gitHubPullRequestJson.ts";
 import { definition } from "../shared/definition.ts";
+import { isGitHubUploadHost } from "./gitHubAttachmentUpload.ts";
 
 const CAPABILITIES: PullRequestCapabilities = {
   diff: true,
   comment: true,
+  attachments: true,
   actions: [...definition.changeRequestActions],
   mergeMethods: ["merge", "squash", "rebase"],
   deleteBranch: true,
@@ -76,9 +78,11 @@ const UNAVAILABLE_REQUIREMENT = {
  */
 export function gitHubViewerPermissions(
   access: GitHubViewerAccess & Pick<GitHubRepositoryAccess, "autoMergeAllowed">,
+  host = "github.com",
 ): PullRequestViewerPermissions {
   return {
     ...(access.canWrite ? { stackRebase: true } : {}),
+    uploadAttachment: access.canWrite && isGitHubUploadHost(host),
     actions: [
       ...(access.canDeleteBranch === true ? (["delete-branch"] as const) : []),
       // Keep disabling available if the repository has since turned auto-merge off.
@@ -521,10 +525,13 @@ export const make = Effect.gen(function* () {
           ],
           mergeCapabilities: pullRequest.viewerAccess.mergeCapabilities,
           viewerPermissions: {
-            ...gitHubViewerPermissions({
-              ...pullRequest.viewerAccess,
-              canUpdateBranch: pullRequest.comparison?.viewerCanUpdate === true,
-            }),
+            ...gitHubViewerPermissions(
+              {
+                ...pullRequest.viewerAccess,
+                canUpdateBranch: pullRequest.comparison?.viewerCanUpdate === true,
+              },
+              input.host,
+            ),
             maintainerEdits: pullRequest.canEditMaintainerEdits,
           },
           baseComparison:
@@ -647,18 +654,21 @@ export const make = Effect.gen(function* () {
     getViewerPermissions: (input) => {
       const lightAccess = cli
         .getViewerAccess({ ...input, allowReserve: true })
-        .pipe(Effect.map((access) => gitHubViewerPermissions(access)));
+        .pipe(Effect.map((access) => gitHubViewerPermissions(access, input.host)));
       if (input.includeUpdateBranch === false) {
         return lightAccess.pipe(Effect.mapError(fail("getViewerPermissions")));
       }
       return cli.getPullRequestDetail(input).pipe(
         Effect.provideService(SourceControlRateLimit.Interactive, true),
         Effect.map((pullRequest) =>
-          gitHubViewerPermissions({
-            ...pullRequest.viewerAccess,
-            canUpdateBranch:
-              pullRequest.state === "open" && pullRequest.comparison?.viewerCanUpdate === true,
-          }),
+          gitHubViewerPermissions(
+            {
+              ...pullRequest.viewerAccess,
+              canUpdateBranch:
+                pullRequest.state === "open" && pullRequest.comparison?.viewerCanUpdate === true,
+            },
+            input.host,
+          ),
         ),
         Effect.catchIf(
           (error) =>

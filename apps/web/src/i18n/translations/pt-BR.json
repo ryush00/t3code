@@ -12140,5 +12140,13 @@
   "faa3bb26abb39c93": "O guia de revisão falhou",
   "b7df38b7d8792d78": "Abrir guia",
   "9e91e9a77b664e4e": "Não foi possível iniciar um guia de revisão",
-  "1e4248d235c665e5": "Os totais do Antigravity deixam de fora chamadas de subagentes registradas apenas nas transcrições."
+  "1e4248d235c665e5": "Os totais do Antigravity deixam de fora chamadas de subagentes registradas apenas nas transcrições.",
+  "c810e443033ac25a": "''{name}'' está vazio.",
+  "7ce0e7e30613750d": "O GitHub não aceita ''{name}''. Anexe arquivos PNG, JPEG, GIF, WebP, SVG, MP4, MOV ou WebM.",
+  "ad812820e9534a02": "Não foi possível anexar o arquivo",
+  "3ec659fc18180be1": "Aguarde o envio dos arquivos terminar antes de enviar.",
+  "260daba0a57e3da5": "Anexar arquivos ao Markdown",
+  "167ee73b0ebb4806": "Enviando arquivo…",
+  "9aa2077538cb3443": "Enviando {count} arquivos…",
+  "90746fd5e4c1daf5": "Anexe, cole ou solte arquivos"
 }

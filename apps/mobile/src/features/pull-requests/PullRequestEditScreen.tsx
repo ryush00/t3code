@@ -17,6 +17,8 @@ import { PullRequestSheetContent } from "./PullRequestSheetContent";
 import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff";
 import { usePullRequestPermissions } from "./usePullRequestPermissions";
 import { PullRequestCompletionSuggestions } from "./PullRequestCompletionSuggestions";
+import { PullRequestAttachButton } from "./PullRequestAttachButton";
+import { usePullRequestAttachmentUpload } from "./usePullRequestAttachmentUpload";
 import { usePullRequestCompletions } from "./usePullRequestCompletions";
 import { m } from "../../i18n/messages";
 
@@ -60,6 +62,15 @@ export function PullRequestEditScreen({ route }: StaticScreenProps<PullRequestEd
     onChangeValue: setDraft,
     support: params.field === "title" ? null : (pr?.capabilities ?? null),
   });
+  const attachments = usePullRequestAttachmentUpload({
+    environmentId: target.environmentId,
+    reference: target.input,
+    provider: pr?.provider,
+    value,
+    updateValue: (updater) => setDraft((current) => updater(current ?? original ?? "")),
+    selection: completions.currentSelection,
+    onPlaceCursor: completions.placeCursor,
+  });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inFlight = useRef(false);
@@ -90,7 +101,7 @@ export function PullRequestEditScreen({ route }: StaticScreenProps<PullRequestEd
   const unchanged = draft === null || draft === original;
   const invalid = params.field === "title" && value.trim().length === 0;
   const save = async () => {
-    if (!allowed || unchanged || invalid || inFlight.current) return;
+    if (!allowed || unchanged || invalid || attachments.uploading || inFlight.current) return;
     inFlight.current = true;
     setBusy(true);
     setError(null);
@@ -144,7 +155,7 @@ export function PullRequestEditScreen({ route }: StaticScreenProps<PullRequestEd
           tone="contrast"
           label={busy ? gt("Saving…") : gt("Save")}
           loading={busy}
-          disabled={!allowed || unchanged || invalid || original === null}
+          disabled={!allowed || unchanged || invalid || attachments.uploading || original === null}
           onPress={() => void save()}
         />
       }
@@ -188,6 +199,15 @@ export function PullRequestEditScreen({ route }: StaticScreenProps<PullRequestEd
         }
         style={params.field === "title" ? undefined : { textAlignVertical: "top" }}
       />
+      {params.field !== "title" && permissions.canAttach && allowed ? (
+        <PullRequestAttachButton
+          disabled={busy || original === null}
+          uploading={attachments.uploading}
+          uploadingCount={attachments.uploadingCount}
+          onPickMedia={attachments.pickMedia}
+          onPickFiles={attachments.pickFiles}
+        />
+      ) : null}
       {readOnlyReason ? (
         <Text className="text-xs text-foreground-muted">{readOnlyReason}</Text>
       ) : null}
