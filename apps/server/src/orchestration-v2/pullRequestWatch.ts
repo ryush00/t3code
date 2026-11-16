@@ -17,6 +17,11 @@ const SNIPPET_LENGTH = 200;
 export type PullRequestWatchChange =
   | { readonly kind: "checks-failed"; readonly failed: ReadonlyArray<PullRequestCheck> }
   | { readonly kind: "checks-passed"; readonly count: number; readonly required: boolean }
+  | {
+      readonly kind: "checks-finished";
+      readonly failing: ReadonlyArray<PullRequestCheck>;
+      readonly required: boolean;
+    }
   | { readonly kind: "checks-awaiting-approval"; readonly checks: ReadonlyArray<PullRequestCheck> }
   | { readonly kind: "remarks"; readonly remarks: ReadonlyArray<PullRequestComment> }
   | { readonly kind: "no-checks"; readonly minutes: number }
@@ -65,6 +70,7 @@ export function evaluatePullRequestWatch(
   let passed = headMoved ? false : watch.passed;
   let passedChecks = headMoved ? [] : watch.passedChecks;
   let owedChecks = headMoved ? [] : (watch.owedChecks ?? []);
+  const owedBefore = owedChecks;
   let awaitingApproval = headMoved ? [] : (watch.awaitingApproval ?? []);
   let approvalAnnounced = headMoved ? false : (watch.approvalAnnounced ?? false);
   // A watch with no answer (saved before the field, or since a push) waits only while the clock
@@ -75,23 +81,23 @@ export function evaluatePullRequestWatch(
   const checks = detail.checks.filter((check) => check.placeholder !== true);
   const failed = checks.filter(isFailedCheck);
   const awaiting = checks.filter((check) => check.status === "action-required");
+  // A new run under a failing name is a rerun that failed again between reads. A run is its
+  // URL, or the host's run ID where the URL stays the same across reruns.
+  const toldRuns = failedRuns;
+  const runOf = (check: PullRequestCheck) => {
+    const run = check.runId ?? check.url;
+    return run === null ? null : JSON.stringify([check.name, run]);
+  };
+  const newlyFailed = failed.filter((check) => {
+    const run = runOf(check);
+    return (
+      !failedChecks.includes(check.name) ||
+      (toldRuns !== undefined && run !== null && !toldRuns.includes(run))
+    );
+  });
   if (checks.length > 0) {
     // A run awaiting approval waits on a person, like a review, so only running checks count.
     checksPending = checks.some((check) => check.status === "pending");
-    // A new run under a failing name is a rerun that failed again between reads. A run is its
-    // URL, or the host's run ID where the URL stays the same across reruns.
-    const toldRuns = failedRuns;
-    const runOf = (check: PullRequestCheck) => {
-      const run = check.runId ?? check.url;
-      return run === null ? null : JSON.stringify([check.name, run]);
-    };
-    const newlyFailed = failed.filter((check) => {
-      const run = runOf(check);
-      return (
-        !failedChecks.includes(check.name) ||
-        (toldRuns !== undefined && run !== null && !toldRuns.includes(run))
-      );
-    });
     if (!checksBaseline && newlyFailed.length > 0) {
       changes.push({ kind: "checks-failed", failed: newlyFailed });
     }
@@ -172,6 +178,26 @@ export function evaluatePullRequestWatch(
     } else if (settled && owed.length > 0) {
       changes.push({ kind: "checks-passed", count: checks.length, required: false });
       owedChecks = [];
+    } else if (gate.some(isFailedCheck)) {
+      // Gate checks still running when one failed are owed one wake when they finish, since
+      // the gate can no longer pass and so never sends the checks-passed wake.
+      const running = checks
+        .filter((check) => check.status === "pending" || check.status === "action-required")
+        .map((check) => check.name);
+      const stillOwed = owedBefore.filter((name) => running.includes(name));
+      const gateNewlyFailed =
+        !checksBaseline && newlyFailed.some((check) => gateNames.includes(check.name));
+      owedChecks = gateNewlyFailed
+        ? [...new Set([...stillOwed, ...running.filter((name) => gateNames.includes(name))])]
+        : stillOwed;
+      const owedFailed = newlyFailed.some((check) => owedBefore.includes(check.name));
+      if (!owedFailed && owedBefore.length > 0 && owedChecks.length === 0) {
+        changes.push({
+          kind: "checks-finished",
+          failing: gate.filter(isFailedCheck),
+          required: owedBefore.every((name) => required.some((check) => check.name === name)),
+        });
+      }
     }
     passed = passedNow;
     passedChecks = passedNow ? gateNames : [];
@@ -403,6 +429,14 @@ function changeLines(
           return `  - ${remark.author?.login ?? "someone"}${where}: ${said}${remark.url ? ` ${remark.url}` : ""}`;
         }),
       ];
+    case "checks-finished":
+      return [
+        `- The ${change.required ? "required " : ""}checks still running when one failed have finished${context.commit}. Still failing:`,
+        ...listed(
+          change.failing,
+          (check) => `  - ${check.name}${check.url ? ` ${check.url}` : ""}`,
+        ),
+      ];
     case "no-checks":
       return [
         `- No checks have reported${context.commit} after ${change.minutes} minutes. None may be configured to run on this change.`,
@@ -421,6 +455,7 @@ function changeLines(
 const SUMMARY: Record<PullRequestWatchChange["kind"], string> = {
   "checks-failed": "checks failed",
   "checks-passed": "checks passed",
+  "checks-finished": "checks finished",
   "checks-awaiting-approval": "checks await approval",
   remarks: "new comments",
   "no-checks": "no checks reported",
@@ -489,6 +524,7 @@ export function pullRequestWatchMessage(input: {
   const failed = changes.some(
     (change) =>
       change.kind === "checks-failed" ||
+      change.kind === "checks-finished" ||
       change.kind === "conflicting" ||
       change.kind === "needs-rebase" ||
       change.kind === "merge-queue-removed",
