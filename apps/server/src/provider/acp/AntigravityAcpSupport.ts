@@ -6,6 +6,7 @@ import {
   type ProviderSendTurnInput,
   type RuntimeMode,
 } from "@t3tools/contracts";
+import { T3_MCP_TOOL_NAMES } from "@t3tools/shared/t3McpToolPresentation";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -183,13 +184,22 @@ export function antigravitySessionMode(
   return modeId === "yolo" || modeId === "auto_edit" ? "default" : modeId;
 }
 
+// agy 1.5.8 titles an MCP call "Run mcp_<server>_<tool>", with "?" on some prompts.
+const T3_MCP_PERMISSION_TITLE = /^Run mcp_t3-code_(?<tool>[A-Za-z0-9_]+)\??$/;
+
+function isT3McpPermissionRequest(request: EffectAcpSchema.RequestPermissionRequest): boolean {
+  const tool = T3_MCP_PERMISSION_TITLE.exec(request.toolCall.title?.trim() ?? "")?.groups?.tool;
+  return tool !== undefined && T3_MCP_TOOL_NAMES.has(tool);
+}
+
 export function antigravityPermissionDisposition(
   policy: AcpRuntimePolicy,
   request: EffectAcpSchema.RequestPermissionRequest,
 ) {
   const disposition = acpPermissionDisposition(policy, request);
-  // agy's Auto has already reviewed what it sends; the user decides unless the sandbox forbids it.
-  return policy.runtimeMode === "auto" && disposition !== "deny" ? "ask" : disposition;
+  if (policy.runtimeMode !== "auto" || disposition === "deny") return disposition;
+  // agy reviews no MCP call; T3's own tools are already gated by the authenticated MCP endpoint.
+  return isT3McpPermissionRequest(request) ? "allow" : "ask";
 }
 
 /** The runtime mode an Antigravity session mode grants; the inverse of `antigravityPermissionMode`. */
