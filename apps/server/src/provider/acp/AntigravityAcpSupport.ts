@@ -7,6 +7,7 @@ import {
   type RuntimeMode,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { T3_MCP_TOOL_NAMES } from "@t3tools/shared/t3McpToolPresentation";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -258,9 +259,19 @@ export function antigravityManagedSessionMode(
   return availableModeIds === undefined || availableModeIds.has(modeId) ? modeId : "default";
 }
 
+// agy 1.5.8 titles an MCP call "Run mcp_<server>_<tool>", with "?" on some prompts.
+const T3_MCP_PERMISSION_TITLE = /^Run mcp_t3-code_(?<tool>[A-Za-z0-9_]+)\??$/;
+
+function isT3McpPermissionRequest(request: EffectAcpSchema.RequestPermissionRequest): boolean {
+  const tool = T3_MCP_PERMISSION_TITLE.exec(request.toolCall.title?.trim() ?? "")?.groups?.tool;
+  return tool !== undefined && T3_MCP_TOOL_NAMES.has(tool);
+}
+
 /**
- * In `auto` the agent asks only about what its own review refused, so every prompt reaches the
- * user. A session that offers no `auto` stays in `default` and is answered as Supervised.
+ * In `auto` the agent asks about what its own review refused, so those prompts reach the user.
+ * It reviews no MCP call and asks about each one; T3's own tools are answered here because the
+ * authenticated MCP endpoint already enforces their scope. A session that offers no `auto` stays
+ * in `default` and is answered as Supervised.
  */
 export function antigravityPermissionDisposition(
   policy: AcpRuntimePolicy,
@@ -269,9 +280,9 @@ export function antigravityPermissionDisposition(
 ): AcpPermissionDisposition {
   if (antigravityPermissionMode(policy) !== "auto")
     return acpPermissionDisposition(policy, request);
-  return session.offersAuto
-    ? "ask"
-    : acpPermissionDisposition({ ...policy, runtimeMode: "approval-required" }, request);
+  if (!session.offersAuto)
+    return acpPermissionDisposition({ ...policy, runtimeMode: "approval-required" }, request);
+  return isT3McpPermissionRequest(request) ? "allow" : "ask";
 }
 
 export function antigravitySessionOffersAutoMode(
