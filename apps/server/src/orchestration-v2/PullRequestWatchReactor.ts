@@ -771,6 +771,13 @@ export const make = Effect.gen(function* () {
       for (const cache of [readFailures, lastReads, threadTails]) {
         for (const key of cache.keys()) if (!byPullRequest.has(key)) cache.delete(key);
       }
+    } else {
+      currentGroups = [
+        ...currentGroups.filter(
+          (group) => threadPullRequestKeyOf(group.targets[0]!.link) !== changed,
+        ),
+        ...groups,
+      ];
     }
     yield* Effect.forEach(
       ending,
@@ -864,6 +871,21 @@ export const make = Effect.gen(function* () {
         );
       }
     });
+    yield* forkParked(
+      Stream.runForEach(engine.streamDomainEvents, (event) => {
+        if (event.type !== "thread.pull-request-synced") return Effect.void;
+        const added = [
+          ...new Set(
+            visibleThreadPullRequests(event.payload.pullRequests ?? [])
+              .filter((link) => link.watch?.awaitingBaseline !== undefined)
+              .map(threadPullRequestKeyOf),
+          ),
+        ];
+        return added.length === 0
+          ? Effect.void
+          : Effect.forEach(added, readOnChange, { discard: true }).pipe(Effect.andThen(follow));
+      }).pipe(Effect.catchCause(logFailure("pull request watch event stream failed", {}))),
+    );
     yield* forkParked(
       sweep.pipe(
         Effect.andThen(follow),
