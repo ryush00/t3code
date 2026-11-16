@@ -304,17 +304,18 @@ export const applyAntigravityAcpModelSelection = Effect.fn("applyAntigravityAcpM
     });
     const explicit = Boolean(input.model) && input.model !== ANTIGRAVITY_DEFAULT_MODEL;
     if (resolved === undefined || (!explicit && resolved === current)) return current;
-    const options = antigravityModelOptions(configOptions);
-    const legacyFamily = options.some((option) => option.value === resolved)
-      ? undefined
-      : legacyAntigravityFamily(configOptions, resolved);
-    if (legacyFamily !== undefined) {
+    const listed = antigravityModelOptions(configOptions).some(
+      (option) => option.value === resolved,
+    );
+    const legacyFamily = listed ? undefined : legacyAntigravityFamily(configOptions, resolved);
+    // A live session's choices go stale when the account gains models; let the agent decide.
+    if (legacyFamily !== undefined || (explicit && !listed)) {
       yield* input.runtime
         .setConfigOption("model", resolved, { allowUnlistedValue: true })
         .pipe(Effect.mapError(input.mapError));
-      return legacyFamily;
+      return legacyFamily ?? resolved;
     }
-    if (!options.some((option) => option.value === resolved)) {
+    if (!listed) {
       return yield* Effect.fail(
         input.mapError(
           EffectAcpErrors.AcpRequestError.invalidParams(
