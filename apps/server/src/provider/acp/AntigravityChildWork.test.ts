@@ -15,6 +15,8 @@ import {
 } from "./AntigravityChildWork.ts";
 import { sanitizeAntigravityToolPayload } from "./AntigravityProtocol.ts";
 import {
+  agencyInvokeStep,
+  agencyOtherToolStep,
   autoApproved,
   CHILD,
   invokeStep,
@@ -67,6 +69,93 @@ it.layer(NodeServices.layer)("readAntigravityChildWork", (it) => {
       ]);
       expect(child?.steps?.[0]?.toolCalls[0]?.input).toBe('{"AbsolutePath":"/project/README.md"}');
     }),
+  );
+
+  it.effect(
+    "decodes flat 1.5.x invoke_subagent input and follows call_* agency records or launch text",
+    () =>
+      Effect.gen(function* () {
+        expect(
+          antigravitySubagentLaunches({
+            TypeName: "self",
+            Role: LAUNCH.role,
+            Prompt: LAUNCH.prompt,
+          }),
+        ).toEqual([LAUNCH]);
+
+        const tester = { role: "Test Runner", prompt: "Run the tests" };
+        const { profile } = yield* makeProfile({
+          runtimeDir: "antigravity-cli",
+          steps: (logUri) => [
+            [
+              1,
+              15,
+              plannerResponse({
+                thinking: "Delegate on 1.5.x",
+                calls: [
+                  ["call_100", "read_file"],
+                  ["call_101", "invoke_subagent"],
+                ],
+              }),
+            ],
+            // Non-subagent agency steps (even mentioning invoke_subagent in text) do not block lookup.
+            [
+              2,
+              132,
+              agencyOtherToolStep({
+                callId: "call_100",
+                name: "read_file",
+                output:
+                  "mentions invoke_subagent and type.googleapis.com/exa.cortex.core.tools.InvokeSubagent",
+              }),
+            ],
+            [
+              3,
+              132,
+              agencyInvokeStep({
+                callId: "call_101",
+                launches: [LAUNCH],
+                children: [{ id: CHILD, logUri }],
+              }),
+            ],
+            [
+              4,
+              132,
+              agencyInvokeStep({
+                callId: "call_102",
+                launches: [tester],
+                children: [{ id: CHILD, logUri }],
+              }),
+            ],
+          ],
+        });
+
+        const byCallId = yield* read(profile, "call_101");
+        expect(byCallId).toHaveLength(1);
+        expect(byCallId[0]).toMatchObject({
+          conversationId: CHILD,
+          role: LAUNCH.role,
+          prompt: LAUNCH.prompt,
+        });
+        expect(byCallId[0]?.steps?.at(-1)?.text).toBe("marker 4242 found");
+        expect(yield* read(profile, "call_100")).toEqual([]);
+        expect(yield* read(profile, "call_999")).toEqual([]);
+
+        // Permission-prompted launches with opaque ids still match unclaimed 1.5.x records by text,
+        // while a call_* sibling claims its own record.
+        const opaque = "35bea692fa95447fbdae6333fec5515f";
+        const testerLaunch = describeAntigravitySubagentLaunches([tester]);
+        expect(
+          (yield* read(profile, opaque, testerLaunch, [
+            { nativeTaskId: "call_101", title: ANTIGRAVITY_SUBAGENT_BATCH_TITLE, prompt: "" },
+          ])).map((child) => child.role),
+        ).toEqual([tester.role]);
+        expect(
+          yield* read(profile, opaque, describeAntigravitySubagentLaunches([LAUNCH]), [
+            { nativeTaskId: "call_101", title: ANTIGRAVITY_SUBAGENT_BATCH_TITLE, prompt: "" },
+          ]),
+        ).toEqual([]);
+      }),
   );
 
   it.effect("follows each auto-approved launch id to the step that ran it", () =>
