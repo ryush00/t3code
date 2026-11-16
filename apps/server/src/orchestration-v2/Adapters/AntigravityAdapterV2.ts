@@ -84,6 +84,7 @@ export type AntigravityAdapterV2RuntimeInput = Omit<
 
 export interface AntigravityAdapterV2Options {
   readonly instanceId: ProviderInstanceId;
+  readonly userHome: string;
   readonly selfInvocation: SelfInvocation;
   readonly makeRuntime: (
     input: AntigravityAdapterV2RuntimeInput,
@@ -136,6 +137,21 @@ const extractAntigravitySubagentUpdate: NonNullable<AcpAdapterV2Flavor["extractS
   };
 };
 
+const RULES_FILE_MAX_BYTES = 256n * 1024n;
+
+type PromptPayload = Parameters<AcpSessionRuntime.AcpSessionRuntime["Service"]["prompt"]>[0];
+
+// The ACP adapter resends runtime instructions on a session's first turn, after compaction and on
+// change; rules follow them so the agent's history keeps one current copy.
+const withTurnRules = (payload: PromptPayload, rules: string): PromptPayload => {
+  const index = payload.prompt.findIndex(
+    (block) => block.type === "text" && block.text.startsWith("<runtime_info>"),
+  );
+  return index === -1
+    ? payload
+    : { ...payload, prompt: payload.prompt.toSpliced(index, 0, { type: "text", text: rules }) };
+};
+
 interface AntigravityFlavorServices {
   readonly random: SecureRandom.SecureRandom["Service"];
   readonly fileSystem: FileSystem.FileSystem;
@@ -151,8 +167,39 @@ export function makeAntigravityAcpAdapterFlavor(
     cwd === null ? [options.host.paths.attachmentsDir] : [cwd, options.host.paths.attachmentsDir];
   // Gemini Enterprise and the 1.4 harness offer no `auto`; those sessions run Auto as Supervised.
   const sessionsWithoutAuto = new Set<string>();
+  // agy acp loads no rules files itself, so they ride the session system prompt append.
+  const readRulesFile = (filePath: string) =>
+    options.fileSystem.stat(filePath).pipe(
+      Effect.flatMap((info) =>
+        info.type === "File" && info.size <= RULES_FILE_MAX_BYTES
+          ? options.fileSystem.readFileString(filePath)
+          : Effect.logWarning("Skipping Antigravity rules file", {
+              filePath,
+              reason: `not a regular file of at most ${RULES_FILE_MAX_BYTES} bytes`,
+            }).pipe(Effect.as("")),
+      ),
+      Effect.catch((error) =>
+        error.reason._tag === "NotFound"
+          ? Effect.succeed("")
+          : Effect.logWarning("Skipping Antigravity rules file", { filePath, error }).pipe(
+              Effect.as(""),
+            ),
+      ),
+    );
   const makeRuntime = Effect.fn("AntigravityAdapterV2.makeRuntime")(
     function* (input: AcpAdapterV2RuntimeInput) {
+      const rules: Array<string> = [];
+      for (const filePath of [
+        options.path.join(options.userHome, ".gemini", "GEMINI.md"),
+        options.path.join(input.cwd, "AGENTS.md"),
+        options.path.join(input.cwd, "GEMINI.md"),
+      ]) {
+        const contents = yield* readRulesFile(filePath);
+        if (contents.trim()) rules.push(`# ${filePath}\n\n${contents}`);
+      }
+      const rulesText = rules.join("\n\n");
+      // Set on start: whether this agent drops the system-prompt append, so rules ride the turns.
+      let rulesInTurns = false;
       const scope = yield* Scope.fork(yield* Effect.scope);
       const runtime = yield* options
         .withProcess(
@@ -160,7 +207,7 @@ export function makeAntigravityAcpAdapterFlavor(
           options.makeRuntime({
             ...input,
             clientFileReads: true,
-            sessionSystemPromptAppend: PULL_REQUEST_LINKING_INSTRUCTIONS,
+            sessionSystemPromptAppend: [...rules, PULL_REQUEST_LINKING_INSTRUCTIONS].join("\n\n"),
           }),
         )
         .pipe(Effect.provideService(Scope.Scope, scope));
@@ -193,7 +240,14 @@ export function makeAntigravityAcpAdapterFlavor(
             ),
           ),
         prompt: (payload, promptOptions) =>
-          Effect.sync(reads.reset).pipe(Effect.andThen(runtime.prompt(payload, promptOptions))),
+          Effect.sync(reads.reset).pipe(
+            Effect.andThen(
+              runtime.prompt(
+                rulesInTurns ? withTurnRules(payload, rulesText) : payload,
+                promptOptions,
+              ),
+            ),
+          ),
         handleSessionUpdate: (handler) => {
           projectUpdate = handler;
           return runtime.handleSessionUpdate((notification) =>
@@ -203,6 +257,8 @@ export function makeAntigravityAcpAdapterFlavor(
         start: () =>
           runtime.start().pipe(
             Effect.tap((started) => {
+              rulesInTurns =
+                rulesText !== "" && !antigravityAppendsSystemPrompt(started.initializeResult);
               if (antigravitySessionOffersAutoMode(started.sessionSetupResult)) return Effect.void;
               sessionsWithoutAuto.add(started.sessionId);
               return Scope.addFinalizer(

@@ -49,6 +49,7 @@ import {
 } from "./AntigravityAdapterV2.ts";
 
 const flavor = makeAntigravityAcpAdapterFlavor({
+  userHome: process.cwd(),
   instanceId: ProviderInstanceId.make("antigravity-test"),
   random: undefined as never,
   fileSystem: undefined as never,
@@ -117,6 +118,9 @@ describe("AntigravityAdapterV2 flavor", () => {
 
   it.effect("answers Auto as Supervised only in a session that offers no automatic review", () =>
     Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const userHome = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-ag-auto-home-" });
       const modes = (ids: ReadonlyArray<string>) => ({
         currentModeId: "default",
         availableModes: ids.map((id) => ({ id, name: id })),
@@ -127,9 +131,10 @@ describe("AntigravityAdapterV2 flavor", () => {
       };
       const sessions = makeAntigravityAcpAdapterFlavor({
         instanceId: ProviderInstanceId.make("antigravity-auto-test"),
+        userHome,
         random: undefined as never,
-        fileSystem: undefined as never,
-        path: undefined as never,
+        fileSystem,
+        path,
         host: { paths: { attachmentsDir: "/attachments" } } as never,
         selfInvocation: undefined as never,
         // The stub names each session after its workspace.
@@ -243,6 +248,7 @@ describe("AntigravityAdapterV2 harness recovery", () => {
       const instanceId = ProviderInstanceId.make("antigravity-recovery-test");
       const adapter = yield* makeAntigravityAdapterV2({
         instanceId,
+        userHome: process.cwd(),
         selfInvocation: yield* resolveSelfInvocation(),
         makeRuntime: (input) =>
           Effect.suspend(() => {
@@ -398,6 +404,7 @@ describe("AntigravityAdapterV2 compaction", () => {
           readonly cwd: string;
         } | null>(null);
         const adapter = yield* makeAntigravityAdapterV2({
+          userHome: process.cwd(),
           instanceId,
           selfInvocation: yield* resolveSelfInvocation(),
           makeRuntime: (input) =>
@@ -538,6 +545,7 @@ describe("AntigravityAdapterV2 session open", () => {
     Effect.gen(function* () {
       const instanceId = ProviderInstanceId.make("antigravity-sign-in-test");
       const adapter = yield* makeAntigravityAdapterV2({
+        userHome: process.cwd(),
         instanceId,
         selfInvocation: yield* resolveSelfInvocation(),
         makeRuntime: () => Effect.fail(cause),
@@ -586,6 +594,7 @@ describe("AntigravityAdapterV2 client file system", () => {
       const crypto = yield* SecureRandom.SecureRandom;
       const instanceId = ProviderInstanceId.make("antigravity-containment-test");
       const adapter = yield* makeAntigravityAdapterV2({
+        userHome: process.cwd(),
         instanceId,
         selfInvocation: yield* resolveSelfInvocation(),
         makeRuntime: (input) =>
@@ -747,6 +756,7 @@ describe("AntigravityAdapterV2 workspace changes", () => {
       let readTextFile: Parameters<RuntimeService["handleReadTextFile"]>[0] | undefined;
       const instanceId = ProviderInstanceId.make("antigravity-workspace-change-test");
       const adapter = yield* makeAntigravityAdapterV2({
+        userHome: process.cwd(),
         instanceId,
         selfInvocation: yield* resolveSelfInvocation(),
         makeRuntime: (input) =>
@@ -922,6 +932,7 @@ describe("AntigravityAdapterV2 html_render pages", () => {
         height: 411,
       };
       const adapter = yield* makeAntigravityAdapterV2({
+        userHome: process.cwd(),
         instanceId,
         selfInvocation: yield* resolveSelfInvocation(),
         makeRuntime: (input) =>
@@ -1237,6 +1248,7 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
   const threadId = ThreadId.make("thread-antigravity-wake");
   const adapter = yield* makeAntigravityAdapterV2({
     instanceId,
+    userHome: process.cwd(),
     selfInvocation: yield* resolveSelfInvocation(),
     continuationRequests: { offer: (request) => Effect.sync(() => void offers.push(request)) },
     makeRuntime: (input) => {
@@ -1819,6 +1831,7 @@ describe("AntigravityAdapterV2 subagent reads", () => {
       const instanceId = ProviderInstanceId.make("antigravity-subagent-reads-test");
       const threadId = ThreadId.make("thread-antigravity-subagent-reads");
       const adapter = yield* makeAntigravityAdapterV2({
+        userHome: process.cwd(),
         instanceId,
         selfInvocation: yield* resolveSelfInvocation(),
         makeRuntime: (input) =>
@@ -2011,6 +2024,7 @@ describe("AntigravityAdapterV2 runtime mode ceiling", () => {
       const modesSet: Array<string> = [];
       const instanceId = ProviderInstanceId.make("antigravity-ceiling-test");
       const adapter = yield* makeAntigravityAdapterV2({
+        userHome: process.cwd(),
         instanceId,
         selfInvocation: yield* resolveSelfInvocation(),
         makeRuntime: (input) =>
@@ -2081,8 +2095,10 @@ describe("AntigravityAdapterV2 session system prompt", () => {
         type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
         const promptReceived = yield* Deferred.make<Parameters<RuntimeService["prompt"]>[0]>();
         const instanceId = ProviderInstanceId.make("antigravity-system-prompt-test");
+        const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-ag-home-" });
         const adapter = yield* makeAntigravityAdapterV2({
           instanceId,
+          userHome: home,
           selfInvocation: yield* resolveSelfInvocation(),
           makeRuntime: (input) =>
             makeAntigravityAcpRuntime({
@@ -2113,6 +2129,10 @@ describe("AntigravityAdapterV2 session system prompt", () => {
           defaultModel: Effect.undefined,
         });
         const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-ag-sp-" });
+        yield* fileSystem.makeDirectory(path.join(home, ".gemini"));
+        yield* fileSystem.writeFileString(path.join(home, ".gemini", "GEMINI.md"), "GLOBAL_RULE");
+        yield* fileSystem.writeFileString(path.join(workspace, "AGENTS.md"), "AGENTS_RULE");
+        yield* fileSystem.writeFileString(path.join(workspace, "GEMINI.md"), "GEMINI_RULE");
         const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
           runtimeMode: "full-access",
           interactionMode: "default",
@@ -2186,10 +2206,15 @@ describe("AntigravityAdapterV2 session system prompt", () => {
         assert.include(sent, "through the Antigravity harness, as gemini-test-low");
         if (agentVersion === "1.4.5") {
           assert.include(append, "pull_request_linking");
+          assert.isBelow(append.indexOf("GLOBAL_RULE"), append.indexOf("AGENTS_RULE"));
+          assert.isBelow(append.indexOf("AGENTS_RULE"), append.indexOf("GEMINI_RULE"));
+          assert.notInclude(sent, "AGENTS_RULE");
           assert.notInclude(sent, "<pull_request_linking>");
         } else {
           assert.notInclude(append, "systemPrompt");
           assert.include(sent, "<pull_request_linking>");
+          assert.isBelow(sent.indexOf("GLOBAL_RULE"), sent.indexOf("AGENTS_RULE"));
+          assert.isBelow(sent.indexOf("AGENTS_RULE"), sent.indexOf("GEMINI_RULE"));
         }
       }).pipe(Effect.provide(layerSession)),
   );
@@ -2212,6 +2237,7 @@ describe("AntigravityAdapterV2 full-access restart", () => {
       const threadId = ThreadId.make("thread-antigravity-restart");
       const adapter = yield* makeAntigravityAdapterV2({
         instanceId,
+        userHome: process.cwd(),
         selfInvocation: yield* resolveSelfInvocation(),
         makeRuntime: (input) =>
           Effect.sync(() => {
@@ -2358,6 +2384,7 @@ describe("AntigravityAdapterV2 questions", () => {
       const threadId = ThreadId.make("thread-antigravity-ask-question");
       const adapter = yield* makeAntigravityAdapterV2({
         instanceId,
+        userHome: process.cwd(),
         selfInvocation: yield* resolveSelfInvocation(),
         makeRuntime: (input) =>
           makeAntigravityAcpRuntime({
