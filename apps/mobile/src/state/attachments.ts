@@ -1,7 +1,9 @@
 import { createAttachmentEnvironmentAtoms } from "@t3tools/client-runtime/state/attachments";
 import type { AtomCommand } from "@t3tools/client-runtime/state/runtime";
 import {
+  type AuthEnvironmentScope,
   AuthOrchestrationOperateScope,
+  AuthSourceControlWriteScope,
   EnvironmentAuthorizationError,
   type EnvironmentId,
 } from "@t3tools/contracts";
@@ -14,25 +16,31 @@ import { readEnvironmentScope } from "./session";
 
 function requireAttachmentWriteAccess<W extends { readonly environmentId: EnvironmentId }, A, E>(
   command: AtomCommand<W, A, E>,
+  resolveScope: (input: W) => AuthEnvironmentScope = () => AuthOrchestrationOperateScope,
 ): AtomCommand<W, A, E | EnvironmentAuthorizationError> {
   return {
     ...command,
     run: (registry, input) =>
-      Effect.suspend((): Effect.Effect<A, E | EnvironmentAuthorizationError> =>
-        readEnvironmentScope(input.environmentId, AuthOrchestrationOperateScope)
+      Effect.suspend((): Effect.Effect<A, E | EnvironmentAuthorizationError> => {
+        const requiredScope = resolveScope(input);
+        return readEnvironmentScope(input.environmentId, requiredScope)
           ? command.run(registry, input)
           : Effect.fail(
               new EnvironmentAuthorizationError({
                 message: m(msg("This connection cannot change attachments.")),
-                requiredScope: AuthOrchestrationOperateScope,
+                requiredScope,
               }),
-            ),
-      ),
+            );
+      }),
   };
 }
 
 const commands = createAttachmentEnvironmentAtoms(connectionAtomRuntime);
 export const attachmentEnvironment = {
-  createUploadUrl: requireAttachmentWriteAccess(commands.createUploadUrl),
+  createUploadUrl: requireAttachmentWriteAccess(commands.createUploadUrl, (call) =>
+    call.input.type === "pull-request"
+      ? AuthSourceControlWriteScope
+      : AuthOrchestrationOperateScope,
+  ),
   remove: requireAttachmentWriteAccess(commands.remove),
 };

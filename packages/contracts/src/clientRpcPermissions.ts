@@ -1,4 +1,5 @@
 import * as Schema from "effect/Schema";
+import { AttachmentCreateUploadUrlInput } from "./assets.ts";
 import { GitPreparePullRequestThreadInput, GitRunStackedActionInput } from "./git.ts";
 import {
   AuthAccessWriteScope,
@@ -51,6 +52,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   // A tracker credential and a project's binding are settings, saved under the same grant.
   [WS_METHODS.issueTrackersConnect]: AuthSettingsWriteScope,
   [WS_METHODS.issueTrackersBindProject]: AuthSettingsWriteScope,
+  [WS_METHODS.pullRequestsUploadAttachment]: AuthSourceControlWriteScope,
   // Writing a guide runs a model on this environment's providers, which reading one does not.
   [WS_METHODS.pullRequestsGenerateReviewGuide]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectsCreateFromThread]: AuthOrchestrationOperateScope,
@@ -95,6 +97,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 
+const decodeAttachmentUpload = Schema.decodeUnknownSync(AttachmentCreateUploadUrlInput);
 const decodePrepareThread = Schema.decodeUnknownSync(GitPreparePullRequestThreadInput);
 const decodeStackedAction = Schema.decodeUnknownSync(GitRunStackedActionInput);
 
@@ -102,6 +105,10 @@ export function clientRpcRequiredScopes(
   method: string,
   input: unknown,
 ): readonly AuthEnvironmentScope[] {
+  if (method === WS_METHODS.attachmentsCreateUploadUrl && input !== undefined) {
+    const payload = decodeAttachmentUpload(input);
+    if (payload.type === "pull-request") return [AuthSourceControlWriteScope];
+  }
   if (method === WS_METHODS.gitPreparePullRequestThread && input !== undefined) {
     const payload = decodePrepareThread(input);
     if (payload.mode === "worktree" && payload.threadId !== undefined)
