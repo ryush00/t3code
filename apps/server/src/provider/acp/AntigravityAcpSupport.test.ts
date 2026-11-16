@@ -170,6 +170,25 @@ describe("Antigravity permission modes", () => {
     for (const kind of ["read", "edit", "execute"] as const) {
       expect(disposition(policy("auto"), request(kind), auto)).toBe("ask");
     }
+    // agy reviews no MCP call, so T3's own tools are answered without a prompt.
+    const mcp = (title: string, kind: EffectAcpSchema.ToolKind = "other") => ({
+      ...request(kind),
+      toolCall: { toolCallId: "tool-1", kind, title },
+    });
+    expect(
+      [
+        "Run mcp_t3-code_t3_thread_read",
+        "Run mcp_t3-code_preview_snapshot?",
+        "Run mcp_t3-code_not_a_real_tool",
+        "Run mcp_github_t3_thread_read",
+        "Run mcp_t3-code_t3_thread_read && rm -rf /",
+        "t3_thread_read",
+      ].map((title) => disposition(policy("auto"), mcp(title), auto)),
+    ).toEqual(["allow", "allow", "ask", "ask", "ask", "ask"]);
+    expect(disposition(policy("auto"), mcp("Run mcp_t3-code_t3_thread_read"), noAuto)).toBe("ask");
+    expect(
+      disposition(policy("approval-required"), mcp("Run mcp_t3-code_t3_thread_read"), auto),
+    ).toBe("ask");
     // A session without `auto` stays in `default` and is answered as Supervised.
     expect(
       (["read", "edit", "execute"] as const).map((kind) =>
