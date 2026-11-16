@@ -269,7 +269,13 @@ describe("wordsHast", () => {
         kind: "reference" as const,
       }));
     const html = wordsHtml("See #12 and `#13`.\n\n![shot](/api/attachments/1)", {
-      extensions: { changeRequest: { repositoryUrl: "https://forge.dev/o/r", autolinks } },
+      extensions: {
+        changeRequest: {
+          provider: "gitcafe",
+          url: "https://forge.dev/o/r/pulls/1",
+          autolinks,
+        },
+      },
     });
     expect(html).toContain(
       '<a href="https://forge.dev/o/r/pull/12" data-pull-request-autolink="reference">#12</a>',
