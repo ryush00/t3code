@@ -12,6 +12,7 @@ import { definition } from "../shared/definition.ts";
 
 import * as GitHubAppAccess from "./GitHubAppAccess.ts";
 import * as GitHubAppSignIn from "./GitHubAppSignIn.ts";
+import * as GitHubAttachmentUpload from "./gitHubAttachmentUpload.ts";
 import * as GitHubMediaFetch from "./gitHubMediaFetch.ts";
 import * as GitHubPullRequestApi from "./GitHubPullRequestApi.ts";
 import * as GitHubPullRequestProvider from "./GitHubPullRequestProvider.ts";
@@ -104,7 +105,12 @@ const makeInstance = Effect.gen(function* () {
     Effect.all({
       sourceControl: GitHubSourceControlProvider.make,
       discovery: GitHubSourceControlProvider.makeDiscovery,
-      pullRequests: GitHubPullRequestProvider.make,
+      pullRequests: Effect.all({
+        base: GitHubPullRequestProvider.make,
+        uploadAttachment: GitHubAttachmentUpload.make.pipe(
+          Effect.provideService(HttpClient.HttpClient, mediaHttpClient),
+        ),
+      }).pipe(Effect.map(({ base, uploadAttachment }) => ({ ...base, uploadAttachment }))),
       issues: GitHubIssueTracker.make,
       fetchMedia: GitHubMediaFetch.make.pipe(
         Effect.provideService(HttpClient.HttpClient, mediaHttpClient),
