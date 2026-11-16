@@ -61,6 +61,7 @@ export function evaluatePullRequestWatch(
 
   // Hosts can return no checks on read failure; preserve prior state.
   let failedChecks = headMoved ? [] : watch.failedChecks;
+  let failedRuns = headMoved ? [] : watch.failedRuns;
   let passed = headMoved ? false : watch.passed;
   let passedChecks = headMoved ? [] : watch.passedChecks;
   let owedChecks = headMoved ? [] : (watch.owedChecks ?? []);
@@ -77,7 +78,17 @@ export function evaluatePullRequestWatch(
   if (checks.length > 0) {
     // A run awaiting approval waits on a person, like a review, so only running checks count.
     checksPending = checks.some((check) => check.status === "pending");
-    const newlyFailed = failed.filter((check) => !failedChecks.includes(check.name));
+    // A new run URL under a failing name is a rerun that failed again between reads.
+    const toldRuns = failedRuns;
+    const runOf = (check: PullRequestCheck) =>
+      check.url === null ? null : JSON.stringify([check.name, check.url]);
+    const newlyFailed = failed.filter((check) => {
+      const run = runOf(check);
+      return (
+        !failedChecks.includes(check.name) ||
+        (toldRuns !== undefined && run !== null && !toldRuns.includes(run))
+      );
+    });
     if (!checksBaseline && newlyFailed.length > 0) {
       changes.push({ kind: "checks-failed", failed: newlyFailed });
     }
@@ -86,6 +97,10 @@ export function evaluatePullRequestWatch(
       approvalAnnounced = true;
     }
     failedChecks = failed.map((check) => check.name);
+    // Runs told stay told for the head: GitHub can show either event's failed run of one check.
+    failedRuns = [
+      ...new Set([...(toldRuns ?? []), ...failed.flatMap((check) => runOf(check) ?? [])]),
+    ];
 
     // Approval reads can omit gated runs. Keep each hold until its jobs finish.
     const awaitingNow = [...new Set(awaiting.map(approvalKey))];
@@ -238,6 +253,7 @@ export function evaluatePullRequestWatch(
       startedAt: watch.startedAt,
       headSha,
       failedChecks,
+      ...(failedRuns !== undefined && { failedRuns }),
       passed,
       passedChecks,
       owedChecks,
