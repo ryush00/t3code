@@ -12808,5 +12808,13 @@
   ],
   "33d18dda74f6d7b3": "Cancel stack auto-merge",
   "012c67c7f1a99e33": "Auto-merge stack",
-  "1e4248d235c665e5": "Antigravity totals leave out subagent calls recorded only in transcripts."
+  "1e4248d235c665e5": "Antigravity totals leave out subagent calls recorded only in transcripts.",
+  "c810e443033ac25a": "''{name}'' is empty.",
+  "7ce0e7e30613750d": "''{name}'' is not supported on GitHub. Attach PNG, JPEG, GIF, WebP, SVG, MP4, MOV, or WebM files.",
+  "ad812820e9534a02": "Could not attach file",
+  "3ec659fc18180be1": "Wait for file uploads to finish before submitting.",
+  "260daba0a57e3da5": "Attach files to Markdown",
+  "167ee73b0ebb4806": "Uploading file…",
+  "9aa2077538cb3443": "Uploading {count} files…",
+  "90746fd5e4c1daf5": "Attach, paste, or drop files"
 }

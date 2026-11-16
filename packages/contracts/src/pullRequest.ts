@@ -329,6 +329,8 @@ export const PullRequestCapabilities = Schema.Struct({
   checksAlwaysReport: Schema.optional(Schema.Boolean),
   /** The diff can read one file the paged diff withheld as too large (`PullRequestDiffInput.path`). */
   withheldFileDiff: Schema.optional(Schema.Boolean),
+  /** The host uploads files to the repository and returns Markdown to embed them. */
+  attachments: Schema.optional(Schema.Boolean),
 });
 export type PullRequestCapabilities = typeof PullRequestCapabilities.Type;
 
@@ -344,6 +346,7 @@ export const PullRequestViewerPermissions = Schema.Struct({
   labels: Schema.optional(Schema.Boolean),
   editChangeRequest: Schema.optional(Schema.Boolean),
   maintainerEdits: Schema.optional(Schema.Boolean),
+  uploadAttachment: Schema.optional(Schema.Boolean),
 });
 export type PullRequestViewerPermissions = typeof PullRequestViewerPermissions.Type;
 
@@ -989,6 +992,24 @@ export const PullRequestLabelChangeInput = Schema.Struct({
   applied: Schema.Boolean,
 });
 export type PullRequestLabelChangeInput = typeof PullRequestLabelChangeInput.Type;
+
+export const PullRequestUploadAttachmentInput = Schema.Struct({
+  projectId: ProjectId,
+  repository: Schema.optional(TrimmedNonEmptyString),
+  host: Schema.optional(TrimmedNonEmptyString),
+  number: Schema.optional(PositiveInt),
+  attachmentId: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
+  fileName: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
+  mimeType: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(100))),
+  alt: Schema.optional(Schema.String.check(Schema.isMaxLength(1024))),
+});
+export type PullRequestUploadAttachmentInput = typeof PullRequestUploadAttachmentInput.Type;
+
+export const PullRequestUploadAttachmentResult = Schema.Struct({
+  url: TrimmedNonEmptyString,
+  markdown: TrimmedNonEmptyString,
+});
+export type PullRequestUploadAttachmentResult = typeof PullRequestUploadAttachmentResult.Type;
 
 /**
  * The names keep their `cli-` prefix for wire compatibility; for a host read with a credential
