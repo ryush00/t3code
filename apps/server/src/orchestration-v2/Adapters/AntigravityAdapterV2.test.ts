@@ -42,6 +42,7 @@ import { makeAntigravityAcpRuntime } from "../../provider/acp/AntigravityAcpSupp
 import { normalizeAntigravitySessionUpdate } from "../../provider/acp/AntigravityProtocol.ts";
 import { ANTIGRAVITY_WAKE_CONTINUATION_PROMPT } from "../../provider/acp/AntigravityWakeWatcher.ts";
 import { ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE } from "../../provider/antigravityAuthSupport.ts";
+import { prepareAntigravityPluginSkills } from "../../provider/Drivers/AntigravitySkills.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { makeTurnInput } from "./AcpAdapterV2.testkit.ts";
@@ -431,8 +432,22 @@ describe("AntigravityAdapterV2 client file system", () => {
       const requestLog = path.join(logs, "requests.ndjson");
       const crypto = yield* SecureRandom.SecureRandom;
       const instanceId = ProviderInstanceId.make("antigravity-containment-test");
+      const userHome = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-antigravity-home-",
+      });
+      const plugin = path.join(userHome, ".gemini", "config", "plugins", "alpha");
+      const pluginSkill = path.join(plugin, "skills", "review", "SKILL.md");
+      const pluginResource = path.join(path.dirname(pluginSkill), "checklist.md");
+      yield* fileSystem.makeDirectory(path.dirname(pluginSkill), { recursive: true });
+      yield* fileSystem.writeFileString(pluginSkill, "---\nname: review\n---\nUse checklist.md\n");
+      yield* fileSystem.writeFileString(pluginResource, "checklist");
+      yield* fileSystem.writeFileString(path.join(plugin, "plugin.json"), "{}");
+      const clientFileRoots = yield* prepareAntigravityPluginSkills({
+        userHome,
+        runtimeTempDirectory: yield* fileSystem.makeTempDirectoryScoped(),
+      });
       const adapter = yield* makeAntigravityAdapterV2({
-        userHome: process.cwd(),
+        userHome,
         instanceId,
         selfInvocation: yield* resolveSelfInvocation(),
         makeRuntime: (input) =>
@@ -447,13 +462,16 @@ describe("AntigravityAdapterV2 client file system", () => {
             },
           }).pipe(
             Effect.provideService(SecureRandom.SecureRandom, crypto),
-            Effect.map((runtime): RuntimeService => ({
+            Effect.map((runtime) => ({
               ...runtime,
-              handleReadTextFile: (handler) =>
+              clientFileRoots,
+              handleReadTextFile: (handler: Parameters<RuntimeService["handleReadTextFile"]>[0]) =>
                 Effect.sync(() => {
                   readTextFile = handler;
                 }).pipe(Effect.andThen(runtime.handleReadTextFile(handler))),
-              handleWriteTextFile: (handler) =>
+              handleWriteTextFile: (
+                handler: Parameters<RuntimeService["handleWriteTextFile"]>[0],
+              ) =>
                 Effect.sync(() => {
                   writeTextFile = handler;
                 }).pipe(Effect.andThen(runtime.handleWriteTextFile(handler))),
@@ -556,6 +574,19 @@ describe("AntigravityAdapterV2 client file system", () => {
         context("fs/read_text_file"),
       );
       assert.equal(viaInsideLink.content, "inside");
+
+      const wrapper = path.join(clientFileRoots[0]!, ".agents", "skills", "0", "SKILL.md");
+      for (const [file, expected] of [
+        [wrapper, JSON.stringify(pluginSkill)],
+        [pluginSkill, "Use checklist.md"],
+        [pluginResource, "checklist"],
+      ] as const) {
+        const read = yield* readTextFile(
+          { sessionId: "mock-session-1", path: file },
+          context("fs/read_text_file"),
+        );
+        assert.include(read.content, expected);
+      }
     }).pipe(Effect.provide(layerSession)),
   );
 });
