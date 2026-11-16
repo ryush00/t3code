@@ -5601,5 +5601,12 @@
   "99d51127f573296b": "其他账号",
   "8ec2c57414669b79": "连接第二个 {tracker} 工作区或用户。",
   "892f08d21b8e48a9": "满足要求时使用{kind, select, squash {压缩合并} merge {合并} rebase {变基} fastForward {快进} other {{method}}}方式将 {layers} 合并到 {base}。这可能会立即发生。",
-  "1e4248d235c665e5": "Antigravity 总计未包含仅记录在对话记录中的子代理调用。"
+  "1e4248d235c665e5": "Antigravity 总计未包含仅记录在对话记录中的子代理调用。",
+  "c810e443033ac25a": "''{name}'' 为空。",
+  "7ce0e7e30613750d": "GitHub 不支持 ''{name}''。请附加 PNG、JPEG、GIF、WebP、SVG、MP4、MOV 或 WebM 文件。",
+  "9aa2077538cb3443": "正在上传 {count} 个文件…",
+  "167ee73b0ebb4806": "正在上传文件…",
+  "5f31c62bdf26a7be": "附加文件",
+  "48223896dc3bab24": "无法打开照片图库",
+  "d1aa0d093eca5e03": "无法打开文件选择器"
 }

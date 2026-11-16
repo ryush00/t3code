@@ -66,6 +66,11 @@ export function usePullRequestCompletions(input: {
     isLoading: hosted.isPending || sentKey !== key,
     failed: hosted.error !== null,
     selection: placed ?? undefined,
+    currentSelection: selection,
+    placeCursor: (cursor: number) => {
+      setSelection({ start: cursor, end: cursor });
+      setPlaced({ start: cursor, end: cursor });
+    },
     onSelectionChange: (event: TextInputSelectionChangeEvent) => {
       setSelection(event.nativeEvent.selection);
       setPlaced(null);

@@ -50,7 +50,14 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("CLI deferred imp
   it.effect("runs commands that do not need them without loading them", () =>
     Effect.gen(function* () {
       hooks.importsAttempted.length = 0;
-      for (const args of [["--version"], ["--help"], ["project", "--help"], ["thread", "--help"]]) {
+      for (const args of [
+        ["--version"],
+        ["--help"],
+        ["pr", "--help"],
+        ["pr", "attach", "--help"],
+        ["project", "--help"],
+        ["thread", "--help"],
+      ]) {
         yield* runCli(args);
       }
       assert.deepEqual(hooks.importsAttempted, []);

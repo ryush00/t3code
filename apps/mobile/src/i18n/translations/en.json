@@ -5619,5 +5619,12 @@
   "99d51127f573296b": "Another account",
   "8ec2c57414669b79": "Connect a second {tracker} workspace or user.",
   "892f08d21b8e48a9": "Merge {layers} into {base} using {kind, select, squash {squash} merge {merge} rebase {rebase} fastForward {fast-forward} other {{method}}} once their requirements are met. This may happen immediately.",
-  "1e4248d235c665e5": "Antigravity totals leave out subagent calls recorded only in transcripts."
+  "1e4248d235c665e5": "Antigravity totals leave out subagent calls recorded only in transcripts.",
+  "c810e443033ac25a": "''{name}'' is empty.",
+  "7ce0e7e30613750d": "''{name}'' is not supported on GitHub. Attach PNG, JPEG, GIF, WebP, SVG, MP4, MOV, or WebM files.",
+  "9aa2077538cb3443": "Uploading {count} files…",
+  "167ee73b0ebb4806": "Uploading file…",
+  "5f31c62bdf26a7be": "Attach file",
+  "48223896dc3bab24": "Could not open photo library",
+  "d1aa0d093eca5e03": "Could not open file picker"
 }

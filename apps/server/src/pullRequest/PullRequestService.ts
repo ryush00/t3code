@@ -72,6 +72,8 @@ import {
   type PullRequestThreadCommentsInput,
   type PullRequestThreadCommentsResult,
   type PullRequestUpdateInput,
+  type PullRequestUploadAttachmentResult,
+  TrimmedNonEmptyString,
   type SourceControlProviderInfo,
   SourceControlProviderKind,
   type ThreadPullRequestKey,
@@ -106,6 +108,17 @@ import { toChangeBreakdown } from "./pullRequestChangeBreakdown.ts";
 
 export interface PullRequestMergeEvent extends PullRequestRef {
   readonly mergedAt: string;
+}
+
+export interface PullRequestUploadFileInput {
+  readonly projectId: ProjectId;
+  readonly repository?: string | undefined;
+  readonly host?: string | undefined;
+  readonly number?: number | undefined;
+  readonly filePath: string;
+  readonly fileName: string;
+  readonly mimeType?: string | undefined;
+  readonly alt?: string | undefined;
 }
 
 type PullRequestReading = Pick<
@@ -320,6 +333,9 @@ export class PullRequestService extends Context.Service<
     readonly setLabels: (
       input: PullRequestLabelChangeInput,
     ) => Effect.Effect<void, PullRequestError>;
+    readonly uploadAttachment: (
+      input: PullRequestUploadFileInput,
+    ) => Effect.Effect<PullRequestUploadAttachmentResult, PullRequestError>;
     readonly invalidate: (
       input: PullRequestInvalidateInput,
       options?: { readonly notifyReaders?: boolean },
@@ -689,6 +705,9 @@ function withRateLimitBackoff(
     replyToThread: interactive("replyToThread", api.replyToThread),
     setReaction: interactive("setReaction", api.setReaction),
     setThreadResolution: interactive("setThreadResolution", api.setThreadResolution),
+    ...(api.uploadAttachment === undefined
+      ? {}
+      : { uploadAttachment: interactive("uploadAttachment", api.uploadAttachment) }),
   };
   // Optional provider methods must be forwarded too; returning the interface alone permits omissions.
   return wrapped satisfies PullRequestProviderApi &
@@ -2544,6 +2563,89 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  const uploadAttachment: PullRequestService["Service"]["uploadAttachment"] = (input) =>
+    (input.repository !== undefined && input.repository.trim().length > 0
+      ? requireProject({
+          projectId: input.projectId,
+          repository: input.repository,
+          ...(input.host === undefined ? {} : { host: input.host }),
+          number: input.number ?? 1,
+        })
+      : listWorkspaceProjects({ projectId: input.projectId }).pipe(
+          Effect.flatMap(({ supported }): Effect.Effect<SupportedProject, PullRequestError> => {
+            const own = supported[0];
+            if (own === undefined) {
+              return Effect.fail(
+                new PullRequestUnavailableError({ reason: "provider-unsupported" }),
+              );
+            }
+            const requestedHost = input.host?.trim().toLowerCase();
+            if (requestedHost !== undefined && requestedHost !== own.host) {
+              return Effect.fail(
+                new PullRequestOperationError({
+                  operation: "uploadAttachment",
+                  detail: "The selected project is not hosted on that server.",
+                }),
+              );
+            }
+            return Effect.succeed(own);
+          }),
+        )
+    ).pipe(
+      Effect.flatMap(
+        (project): Effect.Effect<PullRequestUploadAttachmentResult, PullRequestError> => {
+          const uploader = project.api.uploadAttachment;
+          if (project.api.capabilities.attachments !== true || uploader === undefined) {
+            return Effect.fail(
+              new PullRequestOperationError({
+                operation: "uploadAttachment",
+                detail: "This host cannot attach files to change requests.",
+              }),
+            );
+          }
+          const runUpload = uploader({
+            cwd: project.project.workspaceRoot,
+            repository: project.repository,
+            host: project.host,
+            filePath: input.filePath,
+            fileName: input.fileName,
+            mimeType: input.mimeType,
+            alt: input.alt,
+          }).pipe(
+            Effect.mapError(toPullRequestError("uploadAttachment")),
+            Effect.map((uploaded) => ({
+              url: TrimmedNonEmptyString.make(uploaded.url),
+              markdown: TrimmedNonEmptyString.make(uploaded.markdown),
+            })),
+          );
+          if (input.number === undefined) {
+            return runUpload;
+          }
+          return viewerPermissionsOf(
+            project,
+            {
+              projectId: input.projectId,
+              repository: project.repository,
+              host: project.host,
+              number: input.number,
+            },
+            "uploadAttachment",
+          ).pipe(
+            Effect.flatMap((viewer) =>
+              viewer.uploadAttachment === false
+                ? Effect.fail(
+                    new PullRequestOperationError({
+                      operation: "uploadAttachment",
+                      detail: "You need write access on this repository to attach files.",
+                    }),
+                  )
+                : runUpload,
+            ),
+          );
+        },
+      ),
+    );
+
   const submitReview: PullRequestService["Service"]["submitReview"] = (input) =>
     requireProject(input).pipe(
       Effect.flatMap((project): Effect.Effect<void, PullRequestError> => {
@@ -4260,6 +4362,7 @@ export const make = Effect.gen(function* () {
     requestReviewers: invalidatedByMutation(requestReviewers),
     labelCandidates,
     setLabels: invalidatedByMutation(setLabels),
+    uploadAttachment,
     invalidate,
   });
 });
