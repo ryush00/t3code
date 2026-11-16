@@ -14,6 +14,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import { evaluatePullRequestWatch } from "../orchestration-v2/pullRequestWatch.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as PullRequestService from "./PullRequestService.ts";
 import {
@@ -128,14 +129,17 @@ const make = Effect.gen(function* () {
     }
     // A pending rollup has no failure yet, so any failure the first read finds is news.
     let checksPendingAtStart: boolean | undefined;
+    const reference = {
+      projectId: thread.projectId,
+      host: target.host,
+      repository: target.repository,
+      number: target.number,
+    };
     if (watching && before?.watch === undefined) {
       checksPendingAtStart = yield* pullRequests
         .summary(
           {
-            projectId: thread.projectId,
-            host: target.host,
-            repository: target.repository,
-            number: target.number,
+            ...reference,
             allowStale: false,
           },
           { recoverTransientFailure: false, bypassCache: true },
@@ -152,6 +156,20 @@ const make = Effect.gen(function* () {
             PullRequestOperationError: () => Effect.undefined,
           }),
         );
+    }
+    const initialDetail =
+      watching && before?.watch === undefined && before?.endedWatch === undefined
+        ? yield* pullRequests.invalidate({ reference }).pipe(
+            Effect.andThen(pullRequests.detail({ ...reference, allowStale: false })),
+            Effect.catchCause((cause) =>
+              Cause.hasInterruptsOnly(cause)
+                ? Effect.failCause(cause as Cause.Cause<never>)
+                : Effect.undefined,
+            ),
+          )
+        : undefined;
+    if (initialDetail?.state === "merged") {
+      return yield* new PullRequestNotOpenError({ state: "merged" });
     }
     const uuid = yield* random.uuidV4().pipe(Effect.orDie);
     yield* engine
@@ -177,9 +195,43 @@ const make = Effect.gen(function* () {
         ),
       );
     const after = yield* requireThread(thread.id);
+    const created = watchedLink(after)?.watch;
+    if (
+      created?.awaitingBaseline !== undefined &&
+      initialDetail !== undefined &&
+      initialDetail.state === "open"
+    ) {
+      const evaluation = evaluatePullRequestWatch(
+        created,
+        initialDetail,
+        null,
+        Date.parse(created.startedAt),
+      );
+      if (evaluation.changes.length === 0) {
+        const syncUuid = yield* random.uuidV4().pipe(Effect.orDie);
+        yield* engine
+          .dispatch({
+            type: "thread.pull-request-watch.sync",
+            commandId: CommandId.make(`server:mcp-pr-watch-baseline:${thread.id}:${syncUuid}`),
+            threadId: thread.id,
+            host: target.host,
+            repository: target.repository,
+            number: target.number,
+            startedAt: created.startedAt,
+            watch: evaluation.next,
+          })
+          .pipe(
+            Effect.catchCause((cause) =>
+              Cause.hasInterruptsOnly(cause)
+                ? Effect.failCause(cause as Cause.Cause<never>)
+                : Effect.void,
+            ),
+          );
+      }
+    }
     return {
       ...target,
-      watching: watchedLink(after)?.watch !== undefined,
+      watching: created !== undefined,
       wasWatching: before?.watch !== undefined,
     };
   });
