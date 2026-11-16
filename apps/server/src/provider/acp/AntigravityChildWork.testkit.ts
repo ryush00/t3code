@@ -47,6 +47,57 @@ export const invokeStep = (input: {
       ),
     ),
   );
+// Mirrors the 1.5.x CLI runtime: Step{1: 132 (AGENCY_TOOL_CALL), 5: metadata{4: tool call},
+// 140: agency_tool_call{2: result{6: Any{1: type_url, 2: InvokeSubagent{1: specs, 2: results}}}}}.
+export const agencyInvokeStep = (input: {
+  readonly callId: string;
+  readonly launches: ReadonlyArray<typeof LAUNCH>;
+  readonly children: ReadonlyArray<{ readonly id: string; readonly logUri: string }>;
+}) =>
+  proto(
+    [...varint(1 * 8), ...varint(132)],
+    field(5, proto(field(4, toolCall(input.callId)))),
+    field(
+      140,
+      proto(
+        field(
+          2,
+          proto(
+            field(
+              6,
+              proto(
+                field(1, "type.googleapis.com/exa.cortex.core.tools.InvokeSubagent"),
+                field(
+                  2,
+                  proto(
+                    ...input.launches.map((launch) =>
+                      field(
+                        1,
+                        proto(field(1, "self"), field(2, launch.role), field(3, launch.prompt)),
+                      ),
+                    ),
+                    ...input.children.map((child) =>
+                      field(2, proto(field(1, child.id), field(2, child.logUri))),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+export const agencyOtherToolStep = (input: {
+  readonly callId: string;
+  readonly name: string;
+  readonly output: string;
+}) =>
+  proto(
+    [...varint(1 * 8), ...varint(132)],
+    field(5, proto(field(4, toolCall(input.callId, input.name)))),
+    field(140, proto(field(2, proto(field(1, input.output))))),
+  );
 export const plannerStep = (callIds: ReadonlyArray<string>) =>
   proto(field(20, proto(...callIds.map((id) => field(7, toolCall(id))))));
 /** A planner message with response text (field 1) or thinking (field 3) besides its calls. */
@@ -88,13 +139,14 @@ export const transcriptLines = [
 export const makeProfile = Effect.fn("makeProfile")(function* (input: {
   /** Defaults to a scoped temp directory. */
   readonly profile?: string;
+  readonly runtimeDir?: "antigravity-acp" | "antigravity-cli";
   readonly steps: (logUri: string) => ReadonlyArray<readonly [number, number, Uint8Array]>;
   readonly transcript?: string;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const profile = input.profile ?? (yield* fs.makeTempDirectoryScoped({ prefix: "t3-agy-child-" }));
-  const acp = path.join(profile, "antigravity-acp");
+  const acp = path.join(profile, input.runtimeDir ?? "antigravity-acp");
   const logs = path.join(acp, "brain", CHILD, ".system_generated", "logs");
   yield* fs.makeDirectory(path.join(acp, "conversations"), { recursive: true });
   yield* fs.makeDirectory(logs, { recursive: true });

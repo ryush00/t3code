@@ -17,14 +17,25 @@ import { antigravityManagedPath, antigravityProfileRoot } from "./AntigravityPro
 import { boundAntigravityToolText, isCutAntigravityToolText } from "./AntigravityProtocol.ts";
 
 // Field numbers from the runtime's trajectory protos (exa.cortex_pb).
+const STEP_METADATA = 5;
+const METADATA_TOOL_CALL = 4;
 const STEP_PLANNER_RESPONSE = 20;
 const PLANNER_TEXT = 1;
 const PLANNER_THINKING = 3;
+const STEP_AGENCY_TOOL_CALL = 140;
+const AGENCY_RESULT = 2;
+const AGENCY_RESULT_DETAIL = 6;
+const AGENCY_INVOKE_TYPE_URL = "type.googleapis.com/exa.cortex.core.tools.InvokeSubagent";
+const AGENCY_INVOKE_SPECS = 1;
+const AGENCY_INVOKE_RESULTS = 2;
 const STEP_INVOKE_SUBAGENT = 143;
 const INVOKE_SPECS = 9;
 const INVOKE_RESULTS = 10;
 const INVOKE_SUBAGENT_STEP_TYPE = 127;
+const AGENCY_TOOL_CALL_STEP_TYPE = 132;
 const PLANNER_RESPONSE_STEP_TYPE = 15;
+const INVOKE_TOOL_NAME_BYTES = new TextEncoder().encode("invoke_subagent");
+const RUNTIME_SUBDIRS = ["antigravity-acp", "antigravity-cli"] as const;
 
 // One open reads at most this much; past any bound the batch view stays as it was.
 const MAX_STEP_BYTES = 1024 * 1024;
@@ -47,10 +58,9 @@ interface AntigravityChildLaunch {
   readonly prompt: string;
 }
 
+const LaunchEntry = Schema.Struct({ Role: Schema.String, Prompt: Schema.String });
 const decodeLaunchInput = Schema.decodeUnknownOption(
-  Schema.Struct({
-    Subagents: Schema.NonEmptyArray(Schema.Struct({ Role: Schema.String, Prompt: Schema.String })),
-  }),
+  Schema.Union([Schema.Struct({ Subagents: Schema.NonEmptyArray(LaunchEntry) }), LaunchEntry]),
 );
 
 /** `invoke_subagent` arguments, from the permission prompt or the persisted record. */
@@ -59,7 +69,10 @@ export function antigravitySubagentLaunches(
 ): ReadonlyArray<AntigravityChildLaunch> | undefined {
   return Option.getOrUndefined(
     Option.map(decodeLaunchInput(input), (decoded) =>
-      decoded.Subagents.map((entry) => ({ role: entry.Role, prompt: entry.Prompt })),
+      ("Subagents" in decoded ? decoded.Subagents : [decoded]).map((entry) => ({
+        role: entry.Role,
+        prompt: entry.Prompt,
+      })),
     ),
   );
 }
@@ -121,11 +134,13 @@ const text = (bytes: Uint8Array | undefined, field: number) => {
 };
 
 interface InvokeRecord {
+  readonly toolCallId: string | undefined;
   readonly launches: ReadonlyArray<AntigravityChildLaunch>;
   readonly children: ReadonlyArray<{ readonly conversationId: string; readonly logUri: string }>;
 }
 
 const NATIVE_ID = /^[A-Za-z0-9-]{1,64}$/;
+const CALL_TASK_ID = /^call_[A-Za-z0-9_-]{1,64}$/;
 
 /** Undefined for steps this reader cannot decode, so they never count as proof. */
 const safely =
@@ -138,22 +153,61 @@ const safely =
     }
   };
 
-const decodeInvokeRecord = safely((payload): InvokeRecord | undefined => {
-  const invoke = message(payload, STEP_INVOKE_SUBAGENT);
-  if (invoke === undefined) return undefined;
-  const children = messages(invoke, INVOKE_RESULTS).map((result) => ({
+const decodeInvokeFields = (
+  invoke: Uint8Array,
+  specsField: number,
+  resultsField: number,
+  toolCallId: string | undefined,
+): InvokeRecord | undefined => {
+  const children = messages(invoke, resultsField).map((result) => ({
     conversationId: text(result, 1) ?? "",
     logUri: text(result, 2) ?? "",
   }));
   if (!children.every((child) => NATIVE_ID.test(child.conversationId))) return undefined;
   return {
-    launches: messages(invoke, INVOKE_SPECS).map((spec) => ({
+    toolCallId,
+    launches: messages(invoke, specsField).map((spec) => ({
       role: text(spec, 2) ?? "",
       prompt: text(spec, 3) ?? "",
     })),
     children,
   };
+};
+
+const decodeInvokeRecord = safely((payload): InvokeRecord | undefined => {
+  const invoke = message(payload, STEP_INVOKE_SUBAGENT);
+  if (invoke === undefined) return undefined;
+  const toolCallId = text(message(message(payload, STEP_METADATA), METADATA_TOOL_CALL), 1);
+  return decodeInvokeFields(invoke, INVOKE_SPECS, INVOKE_RESULTS, toolCallId);
 });
+
+type AgencyInvokeDecode =
+  | { readonly kind: "record"; readonly record: InvokeRecord }
+  | { readonly kind: "other_tool" }
+  | { readonly kind: "unreadable" };
+
+const decodeAgencyInvokeStep = (payload: Uint8Array): AgencyInvokeDecode => {
+  try {
+    const toolCall = message(message(payload, STEP_METADATA), METADATA_TOOL_CALL);
+    const toolName = text(toolCall, 2);
+    const detail = message(
+      message(message(payload, STEP_AGENCY_TOOL_CALL), AGENCY_RESULT),
+      AGENCY_RESULT_DETAIL,
+    );
+    const typeUrl = text(detail, 1);
+    if (typeUrl !== AGENCY_INVOKE_TYPE_URL) {
+      return toolName === "invoke_subagent" ? { kind: "unreadable" } : { kind: "other_tool" };
+    }
+    const invoke = message(detail, 2);
+    const record =
+      invoke === undefined
+        ? undefined
+        : decodeInvokeFields(invoke, AGENCY_INVOKE_SPECS, AGENCY_INVOKE_RESULTS, text(toolCall, 1));
+    return record === undefined ? { kind: "unreadable" } : { kind: "record", record };
+  } catch {
+    return { kind: "unreadable" };
+  }
+};
 
 /** The runtime gives no step index to a planner response with neither text nor thinking. */
 const plannerTakesIndex = safely((payload): boolean | undefined => {
@@ -231,10 +285,38 @@ const invokeRecordAt = (database: NodeSqlite.DatabaseSync, idx: number) => {
   return payload === undefined ? undefined : decodeInvokeRecord(payload);
 };
 
+const findInvokeByToolCallId = (
+  database: NodeSqlite.DatabaseSync,
+  callId: string,
+): { readonly idx: number; readonly record: InvokeRecord } | undefined => {
+  const needle = new TextEncoder().encode(callId);
+  for (const row of database
+    .prepare(
+      "SELECT idx, step_type, step_format, length(step_payload) AS size, CASE WHEN step_format = 0 AND length(step_payload) <= ? THEN step_payload END AS step_payload FROM steps WHERE step_type IN (?, ?) AND instr(step_payload, ?) > 0 ORDER BY idx",
+    )
+    .iterate(MAX_STEP_BYTES, INVOKE_SUBAGENT_STEP_TYPE, AGENCY_TOOL_CALL_STEP_TYPE, needle)) {
+    if (row.step_format !== 0 || Number(row.size ?? 0) > MAX_STEP_BYTES) return undefined;
+    const payload = payloadOf(row);
+    if (payload === undefined) return undefined;
+    if (row.step_type === INVOKE_SUBAGENT_STEP_TYPE) {
+      const record = decodeInvokeRecord(payload);
+      if (record === undefined) return undefined;
+      if (record.toolCallId === callId) return { idx: Number(row.idx), record };
+      continue;
+    }
+    const decoded = decodeAgencyInvokeStep(payload);
+    if (decoded.kind === "other_tool") continue;
+    if (decoded.kind === "unreadable") return undefined;
+    if (decoded.record.toolCallId === callId)
+      return { idx: Number(row.idx), record: decoded.record };
+  }
+  return undefined;
+};
+
 /**
- * Auto-approved calls carry `<sessionId>:<n>`, the runtime's index of the step that ran the call,
- * so the record at that index is the proof. Permission prompts carry a random id, so the launch
- * text must match one record no auto-approved sibling claims, and no sibling may share the text.
+ * Auto-approved calls carry `<sessionId>:<n>` (1.4.x) or `call_<id>` (1.5.x), resolving directly
+ * to the record that ran the call. Permission prompts with an opaque id match launch text when
+ * unique among unclaimed records.
  */
 function findInvokeRecord(
   database: NodeSqlite.DatabaseSync,
@@ -256,55 +338,80 @@ function findInvokeRecord(
     const record = idx === undefined ? undefined : invokeRecordAt(database, idx);
     return record === undefined ? undefined : complete(record);
   }
-  const totals = database
-    .prepare(
-      "SELECT count(*) AS rows, coalesce(sum(length(step_payload)), 0) AS bytes, coalesce(max(length(step_payload)), 0) AS largest, sum(step_format != 0) AS other FROM steps WHERE step_type = ?",
-    )
-    .get(INVOKE_SUBAGENT_STEP_TYPE);
-  const total = (key: string) =>
-    totals !== undefined && key in totals ? Number(totals[key as keyof typeof totals] ?? 0) : 0;
+  if (CALL_TASK_ID.test(input.nativeTaskId)) {
+    const matched = findInvokeByToolCallId(database, input.nativeTaskId);
+    return matched === undefined ? undefined : complete(matched.record);
+  }
   const sameText = (launch: BatchLaunch) =>
     launch.title === input.launch.title && launch.prompt === input.launch.prompt;
-  if (
-    input.siblings.some(sameText) ||
-    total("rows") > MAX_INVOKE_ROWS ||
-    total("bytes") > MAX_SCAN_BYTES ||
-    total("largest") > MAX_STEP_BYTES ||
-    total("other") > 0
-  ) {
+  if (input.siblings.some(sameText)) {
     return undefined;
   }
   const siblingStepIndexes = new Set<number>();
+  const claimedCallIdx = new Set<number>();
   for (const sibling of input.siblings) {
     const siblingStepIndex = stepIndexOf(sibling.nativeTaskId);
-    // A sibling whose launch text is missing, or cut under the same roles, or whose step does not
-    // resolve to a record, cannot be ruled out.
-    if (siblingStepIndex === undefined) {
-      if (
-        sibling.title === ANTIGRAVITY_SUBAGENT_BATCH_TITLE ||
-        (sibling.title !== null && isCutAntigravityToolText(sibling.title)) ||
-        (isCutAntigravityToolText(sibling.prompt) &&
-          (sibling.title === null || sibling.title === input.launch.title))
-      )
-        return undefined;
+    if (siblingStepIndex !== undefined) {
+      if (siblingStepIndex >= 0) siblingStepIndexes.add(siblingStepIndex);
       continue;
     }
-    if (siblingStepIndex >= 0) siblingStepIndexes.add(siblingStepIndex);
+    if (CALL_TASK_ID.test(sibling.nativeTaskId)) {
+      const matched = findInvokeByToolCallId(database, sibling.nativeTaskId);
+      if (matched === undefined) return undefined;
+      claimedCallIdx.add(matched.idx);
+      continue;
+    }
+    // A sibling whose launch text is missing, or cut under the same roles, cannot be ruled out.
+    if (
+      sibling.title === ANTIGRAVITY_SUBAGENT_BATCH_TITLE ||
+      (sibling.title !== null && isCutAntigravityToolText(sibling.title)) ||
+      (isCutAntigravityToolText(sibling.prompt) &&
+        (sibling.title === null || sibling.title === input.launch.title))
+    ) {
+      return undefined;
+    }
   }
   const claimedIdx =
     siblingStepIndexes.size === 0
       ? new Map<number, number>()
       : invokeIdxAtStepIndex(database, siblingStepIndexes);
   if (claimedIdx === undefined || claimedIdx.size !== siblingStepIndexes.size) return undefined;
-  const claimed = new Set(claimedIdx.values());
+  const claimed = new Set([...claimedIdx.values(), ...claimedCallIdx]);
   const matches: Array<InvokeRecord> = [];
+  let rows = 0;
+  let bytes = 0;
   for (const row of database
-    .prepare("SELECT idx, step_payload FROM steps WHERE step_type = ? ORDER BY idx")
-    .iterate(INVOKE_SUBAGENT_STEP_TYPE)) {
+    .prepare(
+      "SELECT idx, step_type, step_format, length(step_payload) AS size, CASE WHEN step_format = 0 AND length(step_payload) <= ? THEN step_payload END AS step_payload FROM steps WHERE step_type = ? OR (step_type = ? AND instr(step_payload, ?) > 0) ORDER BY idx",
+    )
+    .iterate(
+      MAX_STEP_BYTES,
+      INVOKE_SUBAGENT_STEP_TYPE,
+      AGENCY_TOOL_CALL_STEP_TYPE,
+      INVOKE_TOOL_NAME_BYTES,
+    )) {
+    const size = Number(row.size ?? 0);
     const payload = payloadOf(row);
-    const record = payload === undefined ? undefined : decodeInvokeRecord(payload);
-    // An unreadable record could be an identical launch, so uniqueness is unproven.
-    if (record === undefined) return undefined;
+    let record: InvokeRecord | undefined;
+    if (row.step_type === AGENCY_TOOL_CALL_STEP_TYPE && payload !== undefined) {
+      const decoded = decodeAgencyInvokeStep(payload);
+      if (decoded.kind === "other_tool") continue;
+      record = decoded.kind === "record" ? decoded.record : undefined;
+    } else if (payload !== undefined) {
+      record = decodeInvokeRecord(payload);
+    }
+    rows += 1;
+    bytes += size;
+    // An unreadable or out-of-bound record could be an identical launch, so uniqueness is unproven.
+    if (
+      rows > MAX_INVOKE_ROWS ||
+      bytes > MAX_SCAN_BYTES ||
+      size > MAX_STEP_BYTES ||
+      row.step_format !== 0 ||
+      record === undefined
+    ) {
+      return undefined;
+    }
     if (claimed.has(Number(row.idx))) continue;
     // T3 stored the launch from the bounded tool payload, so bound the record the same way.
     const described = describeAntigravitySubagentLaunches(
@@ -390,6 +497,7 @@ function transcriptSteps(
 /** Reads the tail of the transcript at the named child's own unlinked profile path. */
 async function readChildTranscript(
   profileRoot: string,
+  runtimeDir: string,
   child: InvokeRecord["children"][number],
   prompt: string,
   byteCap: number,
@@ -397,14 +505,7 @@ async function readChildTranscript(
   const expected = (
     await antigravityManagedPath(
       profileRoot,
-      [
-        "antigravity-acp",
-        "brain",
-        child.conversationId,
-        ".system_generated",
-        "logs",
-        "transcript.jsonl",
-      ],
+      [runtimeDir, "brain", child.conversationId, ".system_generated", "logs", "transcript.jsonl"],
       "file",
     )
   )?.path;
@@ -458,17 +559,25 @@ export const readAntigravityChildWork = Effect.fn("readAntigravityChildWork")(fu
   return yield* Effect.tryPromise({
     try: async (): Promise<ReadonlyArray<OrchestrationV2NativeChildWork>> => {
       const profileRoot = await antigravityProfileRoot(input.profileDirectory);
-      const databasePath =
-        profileRoot === undefined
-          ? undefined
-          : (
-              await antigravityManagedPath(
-                profileRoot,
-                ["antigravity-acp", "conversations", `${input.rootSessionId}.db`],
-                "file",
-              )
-            )?.path;
-      if (profileRoot === undefined || databasePath === undefined) return [];
+      if (profileRoot === undefined) return [];
+      let databasePath: string | undefined;
+      let runtimeDir: string | undefined;
+      for (const subdir of RUNTIME_SUBDIRS) {
+        const candidate = (
+          await antigravityManagedPath(
+            profileRoot,
+            [subdir, "conversations", `${input.rootSessionId}.db`],
+            "file",
+          )
+        )?.path;
+        if (candidate !== undefined) {
+          databasePath = candidate;
+          runtimeDir = subdir;
+          break;
+        }
+      }
+      if (databasePath === undefined || runtimeDir === undefined) return [];
+      const resolvedRuntimeDir = runtimeDir;
       const database = new NodeSqlite.DatabaseSync(databasePath, { readOnly: true });
       let record: InvokeRecord | undefined;
       try {
@@ -487,6 +596,7 @@ export const readAntigravityChildWork = Effect.fn("readAntigravityChildWork")(fu
         children.map(async (child, index) => {
           const transcript = await readChildTranscript(
             profileRoot,
+            resolvedRuntimeDir,
             child,
             launches[index]?.prompt ?? "",
             byteCap,
