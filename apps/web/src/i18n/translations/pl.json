@@ -13094,5 +13094,13 @@
   "75f923f6e3e41def": "Biały",
   "04cabf0f2aa08368": "Czarny",
   "a992afd4cdaa1317": "Anuluj rysowanie",
-  "1e4248d235c665e5": "Sumy Antigravity pomijają wywołania subagentów zapisane wyłącznie w transkryptach."
+  "1e4248d235c665e5": "Sumy Antigravity pomijają wywołania subagentów zapisane wyłącznie w transkryptach.",
+  "c810e443033ac25a": "Plik ''{name}'' jest pusty.",
+  "7ce0e7e30613750d": "Plik ''{name}'' nie jest obsługiwany w GitHub. Załącz pliki PNG, JPEG, GIF, WebP, SVG, MP4, MOV lub WebM.",
+  "ad812820e9534a02": "Nie udało się załączyć pliku",
+  "3ec659fc18180be1": "Poczekaj na zakończenie przesyłania plików przed wysłaniem.",
+  "260daba0a57e3da5": "Załącz pliki do Markdown",
+  "167ee73b0ebb4806": "Przesyłanie pliku…",
+  "9aa2077538cb3443": "Przesyłanie {count} plików…",
+  "90746fd5e4c1daf5": "Załącz, wklej lub upuść pliki"
 }

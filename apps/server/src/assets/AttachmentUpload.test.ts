@@ -28,6 +28,7 @@ import {
   ATTACHMENT_UPLOAD_ROUTE_PREFIX,
   deletePendingAttachment,
   issueAttachmentUploadUrl,
+  resolvePendingAttachmentPath,
   storeAttachmentUpload,
   validateAttachmentUploadToken,
 } from "./AttachmentUpload.ts";
@@ -335,5 +336,29 @@ describe("AttachmentUpload", () => {
       expect(NodeFS.existsSync(pendingPath)).toBe(false);
       expect(NodeFS.existsSync(claimedPath)).toBe(true);
     }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect(
+    "stores binary pull-request uploads without text extraction and resolves their pending path",
+    () =>
+      Effect.gen(function* () {
+        const bytes = new Uint8Array([0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70]);
+        const issued = yield* issueAttachmentUploadUrl({
+          type: "pull-request",
+          name: "clip.mp4",
+          mimeType: "video/mp4",
+          sizeBytes: bytes.byteLength,
+        });
+        const token = issued.relativeUrl.slice(`${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/`.length);
+        const claims = yield* validateAttachmentUploadToken(token);
+        if (!claims) throw new Error("Expected valid pull-request upload claims.");
+        expect(claims.type).toBe("pull-request");
+        expect(yield* storeAttachmentUpload(claims, bytes)).toEqual({ ok: true });
+        const resolvedPath = yield* resolvePendingAttachmentPath(issued.attachmentId);
+        expect(resolvedPath).not.toBeNull();
+        expect(NodeFS.readFileSync(resolvedPath!)).toEqual(Buffer.from(bytes));
+        yield* deletePendingAttachment(issued.attachmentId);
+        expect(yield* resolvePendingAttachmentPath(issued.attachmentId)).toBeNull();
+      }).pipe(Effect.provide(layerTest)),
   );
 });

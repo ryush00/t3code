@@ -1,5 +1,11 @@
 import { act, render, type Screen } from "../../../test/render";
-import { AuthSourceControlWriteScope, EnvironmentId, ProjectId } from "@t3tools/contracts";
+import {
+  AuthSourceControlWriteScope,
+  EnvironmentId,
+  ProjectId,
+  SourceControlProviderKind,
+  TrimmedNonEmptyString,
+} from "@t3tools/contracts";
 import { useState } from "react";
 import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
@@ -7,6 +13,14 @@ import { page, userEvent } from "vite-plus/test/browser";
 const permissions = vi.hoisted(() => ({
   allowed: new Set<string>(),
   listeners: new Set<() => void>(),
+}));
+
+const uploadMock = vi.hoisted(() => ({
+  impl: vi.fn(),
+}));
+
+vi.mock(import("./uploadPullRequestAttachment"), () => ({
+  uploadPullRequestAttachment: (input: unknown) => uploadMock.impl(input),
 }));
 
 vi.mock(import("~/state/session"), async (original) => {
@@ -62,9 +76,15 @@ function setup() {
   permissions.listeners.clear();
   onSave.mockReset();
   onCancel.mockReset();
+  uploadMock.impl.mockReset();
 }
 
-async function openEditor(options?: { value?: string; allowEmpty?: boolean }) {
+async function openEditor(options?: {
+  value?: string;
+  allowEmpty?: boolean;
+  attachable?: boolean;
+}) {
+  const projectId = ProjectId.make("project");
   return render(
     <PullRequestMarkdownEditor
       value={options?.value ?? "Original description"}
@@ -72,8 +92,16 @@ async function openEditor(options?: { value?: string; allowEmpty?: boolean }) {
       environmentId={secondary}
       completionScope={{
         environmentId: secondary,
-        projectId: ProjectId.make("project"),
+        projectId,
         support: { mentions: true, referenceSigils: ["#", "!"] },
+        ...(options?.attachable
+          ? {
+              attachment: {
+                reference: { projectId, repository: "acme/web", number: 42 },
+                provider: SourceControlProviderKind.make("github"),
+              },
+            }
+          : {}),
       }}
       label="Pull request description"
       saving={false}
@@ -212,4 +240,47 @@ it("Escape cancels the edit without closing the right panel sheet", async () => 
 
   await userEvent.keyboard("{Escape}");
   expect(onCloseSheet).toHaveBeenCalledTimes(1);
+});
+
+it("uploads attached files with inline placeholders without losing concurrent typing", async () => {
+  setup();
+  permissions.allowed.add(secondary);
+  let resolveUpload!: (result: { url: string; markdown: string }) => void;
+  uploadMock.impl.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        resolveUpload = resolve;
+      }),
+  );
+
+  await using screen = await openEditor({ value: "Summary:", attachable: true });
+  await expect.element(page.getByRole("button", { name: "Attach files" })).toBeVisible();
+  const fileInput = screen.container.querySelector('input[type="file"]') as HTMLInputElement;
+  expect(fileInput).toBeTruthy();
+
+  const textarea = screen.container.querySelector("textarea")!;
+  textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+
+  const video = new File([new Uint8Array([1, 2, 3, 4])], "demo.mp4", { type: "video/mp4" });
+  await userEvent.upload(fileInput, video);
+
+  expect(textarea.value).toContain('<!-- Uploading "demo.mp4"');
+
+  textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+  await userEvent.type(textarea, "{Enter}Verified locally.");
+
+  await act(async () => {
+    resolveUpload({
+      url: TrimmedNonEmptyString.make("https://uploads.github.com/user-attachments/assets/demo-id"),
+      markdown: TrimmedNonEmptyString.make(
+        "https://uploads.github.com/user-attachments/assets/demo-id",
+      ),
+    });
+  });
+
+  await vi.waitFor(() => {
+    expect(textarea.value).toBe(
+      "Summary:\n\nhttps://uploads.github.com/user-attachments/assets/demo-id\n\nVerified locally.",
+    );
+  });
 });

@@ -5732,5 +5732,12 @@
   "bd2cfcb7be24cd38": "Os arquivos vistos estão ocultos nesta revisão.",
   "6ae1484aa5bd2bc8": "Mostrar arquivos vistos",
   "15db3431c35d4927": "{count, plural, one {{count} visto oculto} other {{count} vistos ocultos}}",
-  "1e4248d235c665e5": "Os totais do Antigravity deixam de fora chamadas de subagentes registradas apenas nas transcrições."
+  "1e4248d235c665e5": "Os totais do Antigravity deixam de fora chamadas de subagentes registradas apenas nas transcrições.",
+  "c810e443033ac25a": "''{name}'' está vazio.",
+  "7ce0e7e30613750d": "O GitHub não aceita ''{name}''. Anexe arquivos PNG, JPEG, GIF, WebP, SVG, MP4, MOV ou WebM.",
+  "9aa2077538cb3443": "Enviando {count} arquivos…",
+  "167ee73b0ebb4806": "Enviando arquivo…",
+  "5f31c62bdf26a7be": "Anexar arquivo",
+  "48223896dc3bab24": "Não foi possível abrir a fototeca",
+  "d1aa0d093eca5e03": "Não foi possível abrir o seletor de arquivos"
 }
