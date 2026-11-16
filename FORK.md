@@ -27,8 +27,10 @@
 - 버전은 업스트림과 같은 형식 `X.Y.Z-nightly.YYYYMMDD.N`이다. `X.Y.Z`는 데스크톱 패키지 버전의 다음 패치, `N`은 릴리즈 워크플로우 실행 번호다.
 - [fork-release.yml](.github/workflows/fork-release.yml)이 `fork` 브랜치를 빌드해 GitHub 프리릴리즈로 올린다. 태그를 손으로 만들지 않는다.
 - 앱 이름은 "T3 Code (Nightly)"지만 앱 ID와 데이터 폴더는 정식 빌드와 같다. 공식 빌드와 동시에 띄우지 않는다.
-- 자동 업데이트 피드는 빌드한 저장소(`GITHUB_REPOSITORY`)를 가리키므로 포크 릴리즈만 따라간다. Windows와 Linux는 Nightly 채널에서 자동 업데이트된다.
-- macOS 빌드는 Developer ID 없이 임시(ad hoc) 서명만 하고 공증하지 않는다. 그래서 자동 업데이트가 되지 않는다. 새 `.dmg`를 직접 설치하고, 처음 열 때 `xattr -cr "/Applications/T3 Code (Nightly).app"`을 실행하거나 시스템 설정의 "그래도 열기"로 통과시킨다.
+- 자동 업데이트 피드는 빌드한 저장소(`GITHUB_REPOSITORY`)를 가리키므로 포크 릴리즈만 따라간다. 모든 플랫폼이 Nightly 채널에서 자동 업데이트된다.
+- macOS 빌드는 Apple 시크릿(`CSC_LINK`, `CSC_KEY_PASSWORD`, `APPLE_API_KEY`, `APPLE_API_KEY_ID`, `APPLE_API_ISSUER`)이 모두 있으면 포크 소유자의 Developer ID로 서명하고 공증한다. 번들 ID `com.t3tools.t3code`는 업스트림 팀 소유라 프로비저닝 프로파일을 받을 수 없으므로 `MACOS_PROVISIONING_PROFILE` 없이 서명하고, 앱 내 브라우저의 패스키는 빠진다. 이때의 권한은 [fork-entitlements.mac.plist](scripts/fork-entitlements.mac.plist)에 있다.
+- 시크릿이 빠지면 임시(ad hoc) 서명으로 떨어진다. 임시 서명의 기본 지정 요구사항은 빌드마다 다른 cdhash라서 Squirrel.Mac이 다음 빌드를 거부하므로, [sign-macos-adhoc.ts](scripts/sign-macos-adhoc.ts)가 요구사항을 번들 ID로 고정한다. 이 빌드는 처음 열 때 `xattr -cr "/Applications/T3 Code (Nightly).app"`이 필요하다.
+- 서명 주체가 바뀌면(임시 서명에서 Developer ID로, 또는 인증서 교체) 그 경계의 업데이트는 거부된다. 새 `.dmg`를 한 번 직접 설치한다.
 - `t3` CLI의 자체 업데이트는 여전히 업스트림 릴리즈를 본다.
 
 ## 자동 동기화
