@@ -5775,5 +5775,12 @@
   "7bb6d3c4fe5cea0f": "{count} machines are overloaded",
   "b48a4b390016a4f0": "Using {usage} while memory is slowing agents down. Stopping it helps the rest.",
   "0d23483df1d6fc87": "Using {usage} while this machine is overloaded. Stopping it helps the rest.",
-  "1e4248d235c665e5": "Antigravity totals leave out subagent calls recorded only in transcripts."
+  "1e4248d235c665e5": "Antigravity totals leave out subagent calls recorded only in transcripts.",
+  "c810e443033ac25a": "''{name}'' is empty.",
+  "7ce0e7e30613750d": "''{name}'' is not supported on GitHub. Attach PNG, JPEG, GIF, WebP, SVG, MP4, MOV, or WebM files.",
+  "9aa2077538cb3443": "Uploading {count} files…",
+  "167ee73b0ebb4806": "Uploading file…",
+  "5f31c62bdf26a7be": "Attach file",
+  "48223896dc3bab24": "Could not open photo library",
+  "d1aa0d093eca5e03": "Could not open file picker"
 }

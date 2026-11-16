@@ -5773,5 +5773,12 @@
   "7bb6d3c4fe5cea0f": "{count} datorer är överbelastade",
   "b48a4b390016a4f0": "Använder {usage} medan minnet gör agenterna långsamma. Att stoppa den hjälper resten.",
   "0d23483df1d6fc87": "Använder {usage} medan den här datorn är överbelastad. Att stoppa den hjälper resten.",
-  "1e4248d235c665e5": "Antigravitys summor utelämnar subagentanrop som bara finns i transkript."
+  "1e4248d235c665e5": "Antigravitys summor utelämnar subagentanrop som bara finns i transkript.",
+  "c810e443033ac25a": "''{name}'' är tom.",
+  "7ce0e7e30613750d": "''{name}'' stöds inte på GitHub. Bifoga PNG-, JPEG-, GIF-, WebP-, SVG-, MP4-, MOV- eller WebM-filer.",
+  "9aa2077538cb3443": "Laddar upp {count} filer…",
+  "167ee73b0ebb4806": "Laddar upp fil…",
+  "5f31c62bdf26a7be": "Bifoga fil",
+  "48223896dc3bab24": "Det gick inte att öppna bildbiblioteket",
+  "d1aa0d093eca5e03": "Det gick inte att öppna filväljaren"
 }

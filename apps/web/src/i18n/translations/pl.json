@@ -13170,5 +13170,13 @@
   "81aafe06d7fede9a": "Miejsce, w którym T3 Code trzyma dane i worktree",
   "9429f8ff8866edac": "CPU",
   "79a21371b8db96da": "Praca czeka na wolny procesor lub na dysk, więc agenci działają wolno.",
-  "1e4248d235c665e5": "Sumy Antigravity pomijają wywołania subagentów zapisane wyłącznie w transkryptach."
+  "1e4248d235c665e5": "Sumy Antigravity pomijają wywołania subagentów zapisane wyłącznie w transkryptach.",
+  "c810e443033ac25a": "Plik ''{name}'' jest pusty.",
+  "7ce0e7e30613750d": "Plik ''{name}'' nie jest obsługiwany w GitHub. Załącz pliki PNG, JPEG, GIF, WebP, SVG, MP4, MOV lub WebM.",
+  "ad812820e9534a02": "Nie udało się załączyć pliku",
+  "3ec659fc18180be1": "Poczekaj na zakończenie przesyłania plików przed wysłaniem.",
+  "260daba0a57e3da5": "Załącz pliki do Markdown",
+  "167ee73b0ebb4806": "Przesyłanie pliku…",
+  "9aa2077538cb3443": "Przesyłanie {count} plików…",
+  "90746fd5e4c1daf5": "Załącz, wklej lub upuść pliki"
 }

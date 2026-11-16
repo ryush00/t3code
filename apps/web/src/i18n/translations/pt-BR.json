@@ -13163,5 +13163,13 @@
   "81aafe06d7fede9a": "Onde o T3 Code guarda seus dados e worktrees",
   "9429f8ff8866edac": "CPU",
   "79a21371b8db96da": "O trabalho espera por uma CPU livre ou pelo disco, então os agentes ficam lentos.",
-  "1e4248d235c665e5": "Os totais do Antigravity deixam de fora chamadas de subagentes registradas apenas nas transcrições."
+  "1e4248d235c665e5": "Os totais do Antigravity deixam de fora chamadas de subagentes registradas apenas nas transcrições.",
+  "c810e443033ac25a": "''{name}'' está vazio.",
+  "7ce0e7e30613750d": "O GitHub não aceita ''{name}''. Anexe arquivos PNG, JPEG, GIF, WebP, SVG, MP4, MOV ou WebM.",
+  "ad812820e9534a02": "Não foi possível anexar o arquivo",
+  "3ec659fc18180be1": "Aguarde o envio dos arquivos terminar antes de enviar.",
+  "260daba0a57e3da5": "Anexar arquivos ao Markdown",
+  "167ee73b0ebb4806": "Enviando arquivo…",
+  "9aa2077538cb3443": "Enviando {count} arquivos…",
+  "90746fd5e4c1daf5": "Anexe, cole ou solte arquivos"
 }

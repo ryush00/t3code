@@ -5775,5 +5775,12 @@
   "7bb6d3c4fe5cea0f": "{count, plural, one {{count} maszyna jest przeciążona} few {{count} maszyny są przeciążone} many {{count} maszyn jest przeciążonych} other {{count} maszyny są przeciążone}}",
   "b48a4b390016a4f0": "Zajmuje {usage}, gdy pamięć spowalnia agentów. Zatrzymanie go pomoże pozostałym.",
   "0d23483df1d6fc87": "Zajmuje {usage}, gdy ta maszyna jest przeciążona. Zatrzymanie go pomoże pozostałym.",
-  "1e4248d235c665e5": "Sumy Antigravity pomijają wywołania subagentów zapisane wyłącznie w transkryptach."
+  "1e4248d235c665e5": "Sumy Antigravity pomijają wywołania subagentów zapisane wyłącznie w transkryptach.",
+  "c810e443033ac25a": "Plik ''{name}'' jest pusty.",
+  "7ce0e7e30613750d": "Plik ''{name}'' nie jest obsługiwany w GitHub. Załącz pliki PNG, JPEG, GIF, WebP, SVG, MP4, MOV lub WebM.",
+  "9aa2077538cb3443": "Przesyłanie {count} plików…",
+  "167ee73b0ebb4806": "Przesyłanie pliku…",
+  "5f31c62bdf26a7be": "Załącz plik",
+  "48223896dc3bab24": "Nie udało się otworzyć biblioteki zdjęć",
+  "d1aa0d093eca5e03": "Nie udało się otworzyć okna wyboru plików"
 }
