@@ -13025,5 +13025,13 @@
     },
     " weitere unter Verknüpfte Elemente"
   ],
-  "1e4248d235c665e5": "Antigravity-Summen lassen Subagent-Aufrufe aus, die nur in Transkripten erfasst sind."
+  "1e4248d235c665e5": "Antigravity-Summen lassen Subagent-Aufrufe aus, die nur in Transkripten erfasst sind.",
+  "c810e443033ac25a": "''{name}'' ist leer.",
+  "7ce0e7e30613750d": "''{name}'' wird von GitHub nicht unterstützt. Hänge PNG-, JPEG-, GIF-, WebP-, SVG-, MP4-, MOV- oder WebM-Dateien an.",
+  "ad812820e9534a02": "Datei konnte nicht angehängt werden",
+  "3ec659fc18180be1": "Warte, bis die Datei-Uploads abgeschlossen sind, bevor du absendest.",
+  "260daba0a57e3da5": "Dateien an Markdown anhängen",
+  "167ee73b0ebb4806": "Datei wird hochgeladen…",
+  "9aa2077538cb3443": "{count} Dateien werden hochgeladen…",
+  "90746fd5e4c1daf5": "Dateien anhängen, einfügen oder ablegen"
 }

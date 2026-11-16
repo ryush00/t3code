@@ -13032,5 +13032,13 @@
     },
     " till i Länkade objekt"
   ],
-  "1e4248d235c665e5": "Antigravitys summor utelämnar subagentanrop som bara finns i transkript."
+  "1e4248d235c665e5": "Antigravitys summor utelämnar subagentanrop som bara finns i transkript.",
+  "c810e443033ac25a": "''{name}'' är tom.",
+  "7ce0e7e30613750d": "''{name}'' stöds inte på GitHub. Bifoga PNG-, JPEG-, GIF-, WebP-, SVG-, MP4-, MOV- eller WebM-filer.",
+  "ad812820e9534a02": "Det gick inte att bifoga filen",
+  "3ec659fc18180be1": "Vänta tills filuppladdningarna är klara innan du skickar.",
+  "260daba0a57e3da5": "Bifoga filer i Markdown",
+  "167ee73b0ebb4806": "Laddar upp fil…",
+  "9aa2077538cb3443": "Laddar upp {count} filer…",
+  "90746fd5e4c1daf5": "Bifoga, klistra in eller släpp filer"
 }

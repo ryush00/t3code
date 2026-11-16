@@ -13020,5 +13020,13 @@
     },
     " más en Elementos vinculados"
   ],
-  "1e4248d235c665e5": "Los totales de Antigravity omiten las llamadas a subagentes registradas solo en las transcripciones."
+  "1e4248d235c665e5": "Los totales de Antigravity omiten las llamadas a subagentes registradas solo en las transcripciones.",
+  "c810e443033ac25a": "''{name}'' está vacío.",
+  "7ce0e7e30613750d": "GitHub no admite ''{name}''. Adjunta archivos PNG, JPEG, GIF, WebP, SVG, MP4, MOV o WebM.",
+  "ad812820e9534a02": "No se pudo adjuntar el archivo",
+  "3ec659fc18180be1": "Espera a que terminen de subirse los archivos antes de enviar.",
+  "260daba0a57e3da5": "Adjuntar archivos al Markdown",
+  "167ee73b0ebb4806": "Subiendo archivo…",
+  "9aa2077538cb3443": "Subiendo {count} archivos…",
+  "90746fd5e4c1daf5": "Adjunta, pega o suelta archivos"
 }

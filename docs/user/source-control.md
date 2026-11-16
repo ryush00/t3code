@@ -40,6 +40,7 @@ A turn's diff shows only that turn's own edits, commits, and conflict fixes—ex
 - **Create**: Commit, push, and open PRs from a thread's Git actions. Configure AI-generated commit/PR writing style in **Settings → Source control & issues → Commits & pull requests** (**Repository conventions** or **Custom instructions**).
 - **Review**: Open **Pull requests** to inspect diffs, comments, checks, commits, and request reviewers. Draft line comments stay local until submitted. If new commits are pushed while you review, click **Load new commits** before merging or submitting.
 - **Saved views**: Save and update filter/sort setups under **Views → Save current view** (stored per device).
+- **File attachments**: When editing a description, commenting, or submitting a review on GitHub (`github.com` / `*.ghe.com`, write access; images up to 10 MB, MP4/MOV/WebM videos up to 100 MB) or GitLab (Reporter+, files up to 100 MB), paste, drop, or pick files directly into Markdown, or run `t3 pr attach <file...>` from a terminal.
 - **Mark files viewed**: Check off files in the **Code** tab to collapse them (reopens as **Changed** on new pushes). Syncs natively with GitHub; stored on your T3 Code server for other hosts.
 - **Mobile**: Open **Pull requests** across environments (cached lists, details, guides, and diffs stay readable offline). Tap **Work on PR** to start a worktree thread on the PR's branch.
 - **Quick actions & options**:

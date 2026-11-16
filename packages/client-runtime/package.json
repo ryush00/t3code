@@ -659,6 +659,10 @@
       "types": "./src/pullRequestSelection.ts",
       "default": "./src/pullRequestSelection.ts"
     },
+    "./pull-request-attachments": {
+      "types": "./src/pullRequestAttachments.ts",
+      "default": "./src/pullRequestAttachments.ts"
+    },
     "./provider-clients": {
       "types": "./src/providerClients.ts",
       "default": "./src/providerClients.ts"
