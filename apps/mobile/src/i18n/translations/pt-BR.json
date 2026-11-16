@@ -5692,5 +5692,12 @@
   "99451a5d2d40440f": "Retirada por {by}.",
   "3ee30a50b70fffab": "Retirada por {by}: {reason}",
   "201490988858b511": "retirada por {by}",
-  "1e4248d235c665e5": "Os totais do Antigravity deixam de fora chamadas de subagentes registradas apenas nas transcrições."
+  "1e4248d235c665e5": "Os totais do Antigravity deixam de fora chamadas de subagentes registradas apenas nas transcrições.",
+  "c810e443033ac25a": "''{name}'' está vazio.",
+  "7ce0e7e30613750d": "O GitHub não aceita ''{name}''. Anexe arquivos PNG, JPEG, GIF, WebP, SVG, MP4, MOV ou WebM.",
+  "9aa2077538cb3443": "Enviando {count} arquivos…",
+  "167ee73b0ebb4806": "Enviando arquivo…",
+  "5f31c62bdf26a7be": "Anexar arquivo",
+  "48223896dc3bab24": "Não foi possível abrir a fototeca",
+  "d1aa0d093eca5e03": "Não foi possível abrir o seletor de arquivos"
 }

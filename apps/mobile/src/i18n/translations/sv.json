@@ -5698,5 +5698,12 @@
   "99451a5d2d40440f": "Återkallad av {by}.",
   "3ee30a50b70fffab": "Återkallad av {by}: {reason}",
   "201490988858b511": "återkallad av {by}",
-  "1e4248d235c665e5": "Antigravitys summor utelämnar subagentanrop som bara finns i transkript."
+  "1e4248d235c665e5": "Antigravitys summor utelämnar subagentanrop som bara finns i transkript.",
+  "c810e443033ac25a": "''{name}'' är tom.",
+  "7ce0e7e30613750d": "''{name}'' stöds inte på GitHub. Bifoga PNG-, JPEG-, GIF-, WebP-, SVG-, MP4-, MOV- eller WebM-filer.",
+  "9aa2077538cb3443": "Laddar upp {count} filer…",
+  "167ee73b0ebb4806": "Laddar upp fil…",
+  "5f31c62bdf26a7be": "Bifoga fil",
+  "48223896dc3bab24": "Det gick inte att öppna bildbiblioteket",
+  "d1aa0d093eca5e03": "Det gick inte att öppna filväljaren"
 }
