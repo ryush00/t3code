@@ -13081,5 +13081,6 @@
   "c63d942911808821": "Verde",
   "75f923f6e3e41def": "Blanco",
   "04cabf0f2aa08368": "Negro",
-  "a992afd4cdaa1317": "Cancelar dibujo"
+  "a992afd4cdaa1317": "Cancelar dibujo",
+  "1e4248d235c665e5": "Los totales de Antigravity omiten las llamadas a subagentes registradas solo en las transcripciones."
 }
