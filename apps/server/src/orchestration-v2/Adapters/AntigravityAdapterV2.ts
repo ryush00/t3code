@@ -145,6 +145,11 @@ const extractAntigravitySubagentUpdate: NonNullable<AcpAdapterV2Flavor["extractS
 
 const RULES_FILE_MAX_BYTES = 256n * 1024n;
 
+// agy wakes an ended turn only when a background command exits, so a dev server it waits on never wakes it.
+const ANTIGRAVITY_LONG_RUNNING_COMMAND_INSTRUCTIONS = `<long_running_commands>
+A dev server, watcher, or other command that keeps running never finishes, so no background completion will wake you while it runs. Never end your turn waiting for one. After you start it, wait for it to be ready with a command that exits, such as \`for i in $(seq 60); do curl -sf http://127.0.0.1:3000 >/dev/null && break; sleep 2; done\`, then continue in the same turn. If it never becomes ready, say so.
+</long_running_commands>`;
+
 type PromptPayload = Parameters<AcpSessionRuntime.AcpSessionRuntime["Service"]["prompt"]>[0];
 
 // The ACP adapter resends runtime instructions on a session's first turn, after compaction and on
@@ -203,6 +208,7 @@ export function makeAntigravityAcpAdapterFlavor(
         const contents = yield* readRulesFile(filePath);
         if (contents.trim()) rules.push(`# ${filePath}\n\n${contents}`);
       }
+      rules.push(ANTIGRAVITY_LONG_RUNNING_COMMAND_INSTRUCTIONS);
       const rulesText = rules.join("\n\n");
       // Set on start: whether this agent drops the system-prompt append, so rules ride the turns.
       let rulesInTurns = false;
