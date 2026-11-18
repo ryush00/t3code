@@ -142,6 +142,26 @@ const extractAntigravitySubagentUpdate: NonNullable<AcpAdapterV2Flavor["extractS
   };
 };
 
+// agy wakes an ended turn only when a background command exits, so a dev server it waits on never wakes it.
+const ANTIGRAVITY_LONG_RUNNING_COMMAND_INSTRUCTIONS = `<long_running_commands>
+A dev server, watcher, or other command that keeps running never finishes, so no background completion will wake you while it runs. Never end your turn waiting for one. After you start it, wait for it to be ready with a command that exits, such as \`for i in $(seq 60); do curl -sf http://127.0.0.1:3000 >/dev/null && break; sleep 2; done\`, then continue in the same turn. If it never becomes ready, say so.
+</long_running_commands>`;
+
+type PromptPayload = Parameters<AcpSessionRuntime.AcpSessionRuntime["Service"]["prompt"]>[0];
+
+// The ACP adapter resends runtime instructions on a session's first turn, after compaction and on
+// change; extra instructions follow them so the agent's history keeps one current copy.
+const withTurnInstructions = (payload: PromptPayload, instructions: string): PromptPayload => {
+  const index = payload.prompt.findIndex(
+    (block) => block.type === "text" && block.text.startsWith("<runtime_info>"),
+  );
+  return index === -1
+    ? payload
+    : {
+        ...payload,
+        prompt: payload.prompt.toSpliced(index, 0, { type: "text", text: instructions }),
+      };
+};
 interface AntigravityFlavorServices {
   readonly random: SecureRandom.SecureRandom["Service"];
   readonly fileSystem: FileSystem.FileSystem;
@@ -157,6 +177,8 @@ export function makeAntigravityAcpAdapterFlavor(
     cwd === null ? [options.host.paths.attachmentsDir] : [cwd, options.host.paths.attachmentsDir];
   const makeRuntime = Effect.fn("AntigravityAdapterV2.makeRuntime")(
     function* (input: AcpAdapterV2RuntimeInput) {
+      // Set on start: whether this agent drops the system-prompt append, so instructions ride the turns.
+      let instructionsInTurns = false;
       const scope = yield* Scope.fork(yield* Effect.scope);
       const runtime = yield* options
         .withProcess(
@@ -164,7 +186,10 @@ export function makeAntigravityAcpAdapterFlavor(
           options.makeRuntime({
             ...input,
             clientFileReads: true,
-            sessionSystemPromptAppend: PULL_REQUEST_LINKING_INSTRUCTIONS,
+            sessionSystemPromptAppend: [
+              ANTIGRAVITY_LONG_RUNNING_COMMAND_INSTRUCTIONS,
+              PULL_REQUEST_LINKING_INSTRUCTIONS,
+            ].join("\n\n"),
           }),
         )
         .pipe(Effect.provideService(Scope.Scope, scope));
@@ -198,7 +223,16 @@ export function makeAntigravityAcpAdapterFlavor(
             ),
           ),
         prompt: (payload, promptOptions) =>
-          Effect.sync(reads.reset).pipe(Effect.andThen(runtime.prompt(payload, promptOptions))),
+          Effect.sync(reads.reset).pipe(
+            Effect.andThen(
+              runtime.prompt(
+                instructionsInTurns
+                  ? withTurnInstructions(payload, ANTIGRAVITY_LONG_RUNNING_COMMAND_INSTRUCTIONS)
+                  : payload,
+                promptOptions,
+              ),
+            ),
+          ),
         handleSessionUpdate: (handler) => {
           projectUpdate = handler;
           return runtime.handleSessionUpdate((notification) => {
@@ -208,14 +242,16 @@ export function makeAntigravityAcpAdapterFlavor(
         },
         start: () =>
           runtime.start().pipe(
-            Effect.tap(
-              (started) =>
+            Effect.tap((started) => {
+              instructionsInTurns = !antigravityAppendsSystemPrompt(started.initializeResult);
+              return (
                 options.onSessionStarted?.(started, input.cwd, {
                   resumed:
                     input.resumeSessionId !== undefined &&
                     started.sessionId === input.resumeSessionId,
-                }) ?? Effect.void,
-            ),
+                }) ?? Effect.void
+              );
+            }),
           ),
       } satisfies typeof runtime;
     },
