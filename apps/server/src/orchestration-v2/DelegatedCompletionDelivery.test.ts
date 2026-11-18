@@ -49,6 +49,7 @@ import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProviderRuntimeRecovery from "./ProviderRuntimeRecoveryService.ts";
+import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import { continueRestartedRun } from "./RestartContinuation.ts";
 import * as RuntimeLayer from "./runtimeLayer.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
@@ -87,12 +88,42 @@ const layerCheckpointStoreTest = CheckpointStore.layer.pipe(
 );
 
 const driver = ProviderDriverKind.make("codex");
+const perThreadCapabilities = {
+  ...CodexProviderCapabilitiesV2,
+  sessions: {
+    ...CodexProviderCapabilitiesV2.sessions,
+    supportsMultipleProviderThreadsPerSession: false,
+  },
+};
 const orchestrationAdapter = {
   instanceId: modelSelection.instanceId,
   driver,
   getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
   planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
-  openSession: () => Effect.die("sessions are not used by delegated completion tests"),
+  // Only the live background-work probe is used; ACP providers report work through it alone.
+  openSession: (input) =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      return {
+        instanceId: modelSelection.instanceId,
+        driver,
+        providerSessionId: input.providerSessionId,
+        providerSession: {
+          id: input.providerSessionId,
+          driver,
+          providerInstanceId: modelSelection.instanceId,
+          status: "ready",
+          cwd: "/repo",
+          model: modelSelection.model,
+          capabilities: perThreadCapabilities,
+          createdAt: now,
+          updatedAt: now,
+          lastError: null,
+        },
+        events: Stream.never,
+        hasPendingBackgroundWork: Effect.succeed(true),
+      } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime;
+    }),
 } as ProviderAdapter.ProviderAdapterV2["Service"];
 const providerInstance = {
   instanceId: modelSelection.instanceId,
@@ -4555,16 +4586,24 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
 
 it.layer(layerTest)("delegated tasks across a server restart", (it) => {
   it.effect.each([
-    { name: "releases", key: "", pendingBackgroundTasks: [], released: true },
+    { name: "releases", key: "", pendingBackgroundTasks: [], live: false, released: true },
     {
       name: "keeps while an unawaited background command runs",
       key: "-background",
       pendingBackgroundTasks: [{ taskId: "dev-server", kind: "command" as const }],
+      live: false,
+      released: false,
+    },
+    {
+      name: "keeps while the live provider reports background work",
+      key: "-live-background",
+      pendingBackgroundTasks: [],
+      live: true,
       released: false,
     },
   ])(
     "queues a child result without creating a provider history handoff and $name its process",
-    ({ key, pendingBackgroundTasks, released }) =>
+    ({ key, pendingBackgroundTasks, live, released }) =>
       Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
         const eventSink = yield* EventSink.EventSinkV2;
@@ -4598,6 +4637,18 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
         const providerThreadId = ProviderThreadId.make(
           `provider-thread:result-message${key}-child`,
         );
+        const providerSessionId = ProviderSessionId.make(
+          `provider-session:result-message${key}-child`,
+        );
+        if (live) {
+          const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
+          yield* sessions.open({
+            threadId: child.childThreadId,
+            providerSessionId,
+            modelSelection,
+            runtimePolicy: { runtimeMode: "full-access", interactionMode: "default", cwd: null },
+          });
+        }
         yield* eventSink.write({
           commandId: CommandId.make(`command:result-message${key}-child-provider`),
           events: [
@@ -4607,19 +4658,13 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
               threadId: child.childThreadId,
               occurredAt: now,
               payload: {
-                id: ProviderSessionId.make(`provider-session:result-message${key}-child`),
+                id: providerSessionId,
                 driver,
                 providerInstanceId: modelSelection.instanceId,
                 status: "ready",
                 cwd: "/repo",
                 model: modelSelection.model,
-                capabilities: {
-                  ...CodexProviderCapabilitiesV2,
-                  sessions: {
-                    ...CodexProviderCapabilitiesV2.sessions,
-                    supportsMultipleProviderThreadsPerSession: false,
-                  },
-                },
+                capabilities: perThreadCapabilities,
                 createdAt: now,
                 updatedAt: now,
                 lastError: null,
