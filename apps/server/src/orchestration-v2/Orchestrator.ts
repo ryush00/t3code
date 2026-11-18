@@ -15419,7 +15419,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             if (
               session.status === "stopped" ||
               session.status === "error" ||
-              session.capabilities.sessions.supportsMultipleProviderThreadsPerSession
+              session.capabilities.sessions.supportsMultipleProviderThreadsPerSession ||
+              (yield* sessionHasBackgroundWork(session, child.providerThreads))
             )
               continue;
             yield* dispatchWithReceiptEffect({
