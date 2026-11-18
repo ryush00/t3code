@@ -3441,6 +3441,7 @@ describe("AntigravityAdapterV2 session system prompt", () => {
         assert.include(sent, "through the Antigravity harness, as gemini-test-low");
         assert.notInclude(append, "systemPrompt");
         assert.include(sent, "<pull_request_linking>");
+        assert.include(sent, "<long_running_commands>");
       }).pipe(Effect.provide(layerSession)),
   );
 });
