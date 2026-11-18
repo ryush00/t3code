@@ -143,6 +143,7 @@ describe("AntigravityAdapterV2 flavor", () => {
             start: () =>
               Effect.succeed({
                 sessionId: input.cwd,
+                initializeResult: { protocolVersion: 1 },
                 sessionSetupResult: { modes: sessionModes[input.cwd] },
               }),
           } as never),
@@ -2208,13 +2209,16 @@ describe("AntigravityAdapterV2 session system prompt", () => {
           assert.include(append, "pull_request_linking");
           assert.isBelow(append.indexOf("GLOBAL_RULE"), append.indexOf("AGENTS_RULE"));
           assert.isBelow(append.indexOf("AGENTS_RULE"), append.indexOf("GEMINI_RULE"));
+          assert.include(append, "<long_running_commands>");
           assert.notInclude(sent, "AGENTS_RULE");
+          assert.notInclude(sent, "<long_running_commands>");
           assert.notInclude(sent, "<pull_request_linking>");
         } else {
           assert.notInclude(append, "systemPrompt");
           assert.include(sent, "<pull_request_linking>");
           assert.isBelow(sent.indexOf("GLOBAL_RULE"), sent.indexOf("AGENTS_RULE"));
           assert.isBelow(sent.indexOf("AGENTS_RULE"), sent.indexOf("GEMINI_RULE"));
+          assert.include(sent, "<long_running_commands>");
         }
       }).pipe(Effect.provide(layerSession)),
   );
