@@ -5,6 +5,7 @@ import {
   type ModelSelection,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2ExecutionNode,
+  type OrchestrationV2Notification,
   type OrchestrationV2PlanArtifact,
   type OrchestrationV2PlanStep,
   type OrchestrationV2ProviderCapabilities,
@@ -610,6 +611,17 @@ export interface AcpAdapterV2Flavor {
   readonly isProviderWakeNotification?: (
     notification: EffectAcpSchema.SessionNotification,
   ) => boolean;
+  /**
+   * Watches native session logs after a completed turn, for agents that wake on a timer or
+   * background command without sending ACP frames until a prompt reattaches the stream.
+   */
+  readonly watchPostSettleWake?: (input: {
+    readonly sessionId: string;
+    readonly offerWake: (options?: {
+      readonly detail?: string | null;
+      readonly notification?: OrchestrationV2Notification;
+    }) => Effect.Effect<boolean>;
+  }) => Effect.Effect<void, never, Scope.Scope>;
   readonly deferFinalizeForBackgroundWork?: AcpNegotiatedFlag;
   /**
    * Every model reply ends with `usage_update`, also the ones the agent starts with no prompt
@@ -2224,6 +2236,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             flavor.sessionModeForPolicy?.(policy),
             flavor.sessionConfigForPolicy?.(policy),
           ]);
+        const postSettleWakeFiber = yield* Ref.make<Fiber.Fiber<void, never> | null>(null);
+        const stopPostSettleWakeWatcher = Ref.getAndSet(postSettleWakeFiber, null).pipe(
+          Effect.flatMap((fiber) =>
+            fiber === null ? Effect.void : Fiber.interrupt(fiber).pipe(Effect.asVoid),
+          ),
+        );
         const promptInstructionStates = yield* Ref.make(new Map<string, T3AcpInstructionState>());
         const promptRuntimeInstructions = yield* Ref.make(new Map<string, string>());
         // Unique markers keep delayed prompt completions from clearing later compactions.
@@ -5088,7 +5106,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             });
           });
 
-        const offerContinuationRun = Effect.fnUntraced(function* (_sessionId: string) {
+        const offerContinuationRun = Effect.fnUntraced(function* (
+          _sessionId: string,
+          wakeOptions?: {
+            readonly delivery?: "adapter_buffered" | "message_text";
+            readonly detail?: string | null;
+            readonly notification?: OrchestrationV2Notification;
+          },
+        ) {
           if (continuationRequests === undefined) {
             return false;
           }
@@ -5113,7 +5138,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           );
           if (Option.isNone(pending)) return false;
           const { route, generation, reports } = pending.value;
-          const notification = backgroundWorkNotification([...reports.values()]);
+          const notification =
+            wakeOptions?.notification ?? backgroundWorkNotification([...reports.values()]);
           yield* Effect.logInfo("orchestration-v2.acp-wake-turn-detected", {
             driver,
             providerSessionId: input.providerSessionId,
@@ -5124,7 +5150,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             threadId: route.threadId,
             providerThreadId: route.providerThreadId,
             driver,
-            detail: null,
+            detail: wakeOptions?.detail ?? null,
+            ...(wakeOptions?.delivery === undefined ? {} : { delivery: wakeOptions.delivery }),
             ...(notification === null ? {} : { notification }),
             clearIfCurrent: () =>
               continuationPermit.withPermit(
@@ -7598,6 +7625,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         });
 
         const restartAcpRuntime = Effect.fnUntraced(function* (threadId: ThreadId | null) {
+          yield* stopPostSettleWakeWatcher;
           const previousGeneration = yield* Ref.get(runtimeCallbackGeneration);
           yield* runtimeCallbackPermit.withPermit(
             quarantineNativeTransportAtGeneration(previousGeneration),
@@ -7784,6 +7812,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             threadId: ThreadId | null,
             candidate: AcpSessionRuntime.AcpSessionRuntimeStartResult,
           ) {
+            yield* stopPostSettleWakeWatcher;
             rememberTerminalEnvironment(candidate.sessionId, yield* readMcpContext(threadId));
             yield* Ref.set(runtimeRestartRequired, false);
             yield* Ref.set(activeSessionId, candidate.sessionId);
@@ -8313,6 +8342,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           );
         });
         const quarantineStoppedRun = Effect.fnUntraced(function* () {
+          yield* stopPostSettleWakeWatcher;
           yield* continuationPermit.withPermit(
             Effect.gen(function* () {
               yield* Ref.update(continuationGeneration, (value) => value + 1);
@@ -8530,6 +8560,24 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
           if (settledStatus !== "completed") {
             yield* Ref.set(midTurnUnreportedCompletedTaskIds, new Set());
+          }
+          yield* stopPostSettleWakeWatcher;
+          const wakeSessionId = yield* Ref.get(activeSessionId);
+          if (
+            settledStatus === "completed" &&
+            !directStopQuarantine &&
+            continuationRequests !== undefined &&
+            flavor.watchPostSettleWake !== undefined &&
+            wakeSessionId !== null
+          ) {
+            const fiber = yield* flavor
+              .watchPostSettleWake({
+                sessionId: wakeSessionId,
+                offerWake: (wakeOptions) =>
+                  offerContinuationRun(wakeSessionId, { delivery: "message_text", ...wakeOptions }),
+              })
+              .pipe(Effect.forkScoped, Effect.provideService(Scope.Scope, sessionScope));
+            yield* Ref.set(postSettleWakeFiber, fiber);
           }
           yield* Deferred.succeed(context.completed, undefined).pipe(Effect.ignore);
         });
@@ -8832,6 +8880,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 reason: "previous_turn_active",
               });
             }
+            yield* stopPostSettleWakeWatcher;
             useProviderThreadIdentity(turnInput.providerThread);
             // load/resume can invoke client methods; install the incoming policy before activation.
             const previousRuntimePolicy = yield* Ref.get(activeRuntimePolicy);
@@ -9386,6 +9435,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
 
         yield* Effect.addFinalizer(() =>
           Effect.gen(function* () {
+            yield* stopPostSettleWakeWatcher;
             yield* continuationPermit.withPermit(
               Effect.gen(function* () {
                 yield* Ref.set(continuationClosed, true);
