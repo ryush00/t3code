@@ -1,3 +1,5 @@
+import * as NodeSqlite from "node:sqlite";
+
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
@@ -37,6 +39,7 @@ import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import { makeAntigravityAcpRuntime } from "../../provider/acp/AntigravityAcpSupport.ts";
 import { normalizeAntigravitySessionUpdate } from "../../provider/acp/AntigravityProtocol.ts";
+import { ANTIGRAVITY_WAKE_CONTINUATION_PROMPT } from "../../provider/acp/AntigravityWakeWatcher.ts";
 import { ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE } from "../../provider/antigravityAuthSupport.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -1589,6 +1592,205 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
       yield* TestClock.adjust("3 seconds");
       const terminal = (yield* throughTerminal).at(-1);
       assert.equal(terminal?.type === "turn.terminal" && terminal.status, "completed");
+    }).pipe(Effect.provide(layerSession)),
+  );
+
+  // agy 1.5.9 ends the prompt after `schedule`, then writes the timer's wake (step 101) to its
+  // session log and sends no ACP frames until a prompt reattaches the stream.
+  it.effect("re-prompts when a timer wakes the agent without any ACP frames", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const crypto = yield* SecureRandom.SecureRandom;
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const profileDirectory = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-antigravity-timer-",
+      });
+      const conversations = path.join(profileDirectory, "antigravity-acp", "conversations");
+      yield* fileSystem.makeDirectory(conversations, { recursive: true });
+      const dbPath = path.join(conversations, "mock-session-1.db");
+      const appendSteps = (steps: ReadonlyArray<readonly [number, number]>) =>
+        Effect.sync(() => {
+          const database = new NodeSqlite.DatabaseSync(dbPath);
+          try {
+            database.exec(
+              "CREATE TABLE IF NOT EXISTS steps (idx INTEGER PRIMARY KEY, step_type INTEGER, status INTEGER)",
+            );
+            const insert = database.prepare(
+              "INSERT INTO steps VALUES ((SELECT coalesce(max(idx), -1) + 1 FROM steps), ?, ?)",
+            );
+            for (const [stepType, status] of steps) insert.run(stepType, status);
+          } finally {
+            database.close();
+          }
+        });
+
+      type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+      let sessionUpdate: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
+      const send = (update: EffectAcpSchema.SessionUpdate) =>
+        sessionUpdate === undefined
+          ? Effect.die("the adapter must handle session updates")
+          : sessionUpdate(
+              normalizeAntigravitySessionUpdate({ sessionId: "mock-session-1", update }),
+            );
+      const prompts: Array<string> = [];
+      const pollWaiting = yield* Queue.unbounded<void>();
+      const offers =
+        yield* Queue.unbounded<ProviderContinuationRequests.ProviderContinuationRequest>();
+      const instanceId = ProviderInstanceId.make("antigravity-timer-test");
+      const threadId = ThreadId.make("thread-antigravity-timer");
+      const adapter = yield* makeAntigravityAdapterV2({
+        instanceId,
+        userHome: process.cwd(),
+        selfInvocation: yield* resolveSelfInvocation(),
+        continuationRequests: {
+          offer: (request) => Queue.offer(offers, request).pipe(Effect.asVoid),
+        },
+        profileDirectory,
+        wakeWatcherOptions: {
+          settleGrace: "0 millis",
+          onPollWait: () => Queue.offer(pollWaiting, undefined).pipe(Effect.asVoid),
+        },
+        makeRuntime: (input) =>
+          makeAntigravityAcpRuntime({
+            ...input,
+            childProcessSpawner,
+            spawn: {
+              command: process.execPath,
+              args: [mockAgentPath],
+              cwd: input.cwd,
+              env: { T3_ACP_ANTIGRAVITY: "1" },
+            },
+          }).pipe(
+            Effect.provideService(SecureRandom.SecureRandom, crypto),
+            Effect.map((runtime): RuntimeService => ({
+              ...runtime,
+              handleSessionUpdate: (handler) =>
+                Effect.sync(() => {
+                  sessionUpdate = handler;
+                }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+              prompt: (request) =>
+                Effect.gen(function* () {
+                  prompts.push(JSON.stringify(request.prompt));
+                  if (prompts.length === 1) {
+                    yield* appendSteps([[14, 3]]);
+                    yield* send({
+                      sessionUpdate: "tool_call",
+                      toolCallId: "call_schedule",
+                      kind: "other",
+                      title: "Run schedule",
+                      status: "completed",
+                      rawInput: { DurationSeconds: 60, Prompt: "Check the deploy" },
+                    });
+                    yield* send({
+                      sessionUpdate: "agent_message_chunk",
+                      content: { type: "text", text: "I'll check again in a minute." },
+                    });
+                    yield* appendSteps([[15, 3]]);
+                  } else {
+                    yield* send({
+                      sessionUpdate: "agent_message_chunk",
+                      content: { type: "text", text: "The deploy passed." },
+                    });
+                  }
+                  yield* send({ sessionUpdate: "usage_update", used: 9000, size: 1048576 });
+                  return { stopReason: "end_turn" as const };
+                }),
+            })),
+          ),
+        withProcess: (_stop, task) => task,
+        defaultModel: Effect.undefined,
+      });
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "gemini-test-low" } as const;
+      const session = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-antigravity-timer"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* session.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const throughTerminal = session.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.map((events) => Array.from(events)),
+      );
+      const now = yield* DateTime.now;
+      const startTurn = (
+        ordinal: number,
+        message: { createdBy: "user" | "agent"; creationSource: "web" | "server"; text: string },
+      ) =>
+        session.startTurn({
+          appThread: {
+            createdBy: "user",
+            creationSource: "web",
+            id: threadId,
+            projectId: ProjectId.make("project-antigravity-timer"),
+            title: "Antigravity timer",
+            providerInstanceId: instanceId,
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: process.cwd(),
+            activeProviderThreadId: providerThread.id,
+            lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            lastVisitedAt: null,
+            deletedAt: null,
+          },
+          threadId,
+          runId: RunId.make(`run-antigravity-timer-${ordinal}`),
+          runOrdinal: ordinal,
+          providerTurnOrdinal: ordinal,
+          attemptId: RunAttemptId.make(`attempt-antigravity-timer-${ordinal}`),
+          rootNodeId: NodeId.make(`node-antigravity-timer-${ordinal}`),
+          providerThread,
+          message: {
+            ...message,
+            messageId: MessageId.make(`message-antigravity-timer-${ordinal}`),
+            attachments: [],
+          },
+          modelSelection,
+          runtimePolicy,
+        });
+
+      yield* startTurn(1, { createdBy: "user", creationSource: "web", text: "watch the deploy" });
+      const first = (yield* throughTerminal).at(-1);
+      assert.equal(first?.type === "turn.terminal" && first.status, "completed");
+
+      yield* Queue.take(pollWaiting);
+      yield* appendSteps([[101, 3]]);
+      yield* TestClock.adjust("400 millis");
+      const wake = yield* Queue.take(offers);
+      assert.equal(wake.delivery, "message_text");
+
+      yield* startTurn(2, {
+        createdBy: "agent",
+        creationSource: "server",
+        text: "Background task completed.",
+      });
+      const second = yield* throughTerminal;
+      const secondTerminal = second.at(-1);
+      assert.equal(secondTerminal?.type === "turn.terminal" && secondTerminal.status, "completed");
+      assert.include(prompts[1] ?? "", ANTIGRAVITY_WAKE_CONTINUATION_PROMPT);
+      assert.include(JSON.stringify(second), "The deploy passed.");
     }).pipe(Effect.provide(layerSession)),
   );
 

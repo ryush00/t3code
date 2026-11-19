@@ -38,6 +38,11 @@ import {
 import { readAntigravityClientTextFile } from "../../provider/acp/AntigravityClientFiles.ts";
 import { watchAntigravityPromptOutcome } from "../../provider/acp/AntigravityTurnOutcome.ts";
 import {
+  makeAntigravityPostSettleWakeWatcher,
+  rewriteAntigravityUserText,
+  type AntigravityWakeWatcherOptions,
+} from "../../provider/acp/AntigravityWakeWatcher.ts";
+import {
   antigravityApprovalOptions,
   antigravityCommandOutlivesPrompt,
   antigravitySubagentOutput,
@@ -104,6 +109,7 @@ export interface AntigravityAdapterV2Options {
   readonly continuationRequests?: Parameters<typeof makeAcpAdapterV2>[0]["continuationRequests"];
   /** The agent's GEMINI_HOME. Its session logs show turns that ended on an upstream error. */
   readonly profileDirectory?: string;
+  readonly wakeWatcherOptions?: AntigravityWakeWatcherOptions;
 }
 
 /**
@@ -347,6 +353,7 @@ export function makeAntigravityAcpAdapterFlavor(
     requiresRuntimeRestartForPolicyChange: (previous, next) =>
       (previous.runtimeMode === "full-access") !== (next.runtimeMode === "full-access"),
     runtimeModeForSessionMode: antigravityRuntimeModeForSessionMode,
+    rewriteUserText: rewriteAntigravityUserText,
     clientFileSystem: {
       readTextFile: (request, cwd) =>
         readAntigravityClientTextFile({
@@ -381,6 +388,11 @@ export function makeAntigravityAcpAdapterFlavor(
       : {
           watchPromptOutcome: (sessionId: string) =>
             watchAntigravityPromptOutcome(profileDirectory, sessionId),
+          // agy 1.5.9 records a timer wake in its session log but sends no ACP frames until prompted.
+          watchPostSettleWake: makeAntigravityPostSettleWakeWatcher(
+            profileDirectory,
+            options.wakeWatcherOptions,
+          ),
           subagentsOutlivingPrompt: ({ sessionId, nativeTaskIds }) =>
             readAntigravityChildrenAtWork({
               profileDirectory,
