@@ -3,7 +3,30 @@ import * as Schema from "effect/Schema";
 
 import { compareSemverVersions } from "./semver.ts";
 
-const CLI_RELEASE_REPOSITORY = "pingdotgg/t3code";
+const DEFAULT_CLI_RELEASE_REPOSITORY = "pingdotgg/t3code";
+const GITHUB_REPOSITORY_SEGMENT = /^[A-Za-z0-9._-]+$/u;
+
+declare const __T3CODE_BUILD_RELEASE_REPOSITORY__: string | undefined;
+
+function isValidRepositorySegment(value: string | undefined): value is string {
+  return (
+    value !== undefined && value !== "." && value !== ".." && GITHUB_REPOSITORY_SEGMENT.test(value)
+  );
+}
+
+export function resolveCliReleaseRepository(repository: string | undefined): string {
+  const configured = repository?.trim() ?? "";
+  const [owner, name, ...extra] = configured.split("/");
+  return isValidRepositorySegment(owner) && isValidRepositorySegment(name) && extra.length === 0
+    ? configured
+    : DEFAULT_CLI_RELEASE_REPOSITORY;
+}
+
+const CLI_RELEASE_REPOSITORY = resolveCliReleaseRepository(
+  typeof __T3CODE_BUILD_RELEASE_REPOSITORY__ === "undefined"
+    ? undefined
+    : __T3CODE_BUILD_RELEASE_REPOSITORY__,
+);
 export const CLI_RELEASES_PAGE_URL = `https://github.com/${CLI_RELEASE_REPOSITORY}/releases`;
 export const CLI_RELEASE_CHECKSUMS_FILE = "SHA256SUMS";
 export const CLI_RELEASE_BASE_URL_ENV = "T3CODE_RELEASE_BASE_URL";
