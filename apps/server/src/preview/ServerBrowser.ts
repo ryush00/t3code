@@ -2600,6 +2600,9 @@ const make = Effect.gen(function* () {
             : undefined;
         const navigationTimeout = Math.min(request.timeoutMs, NAVIGATION_TIMEOUT_MS);
         const profileId = existing ? undefined : resolveOpenProfile(open.profileId);
+        // Hidden or locked desktop windows stall <webview> captures; keep agent tabs headless
+        // unless the caller explicitly asks for a logged-in desktop profile.
+        const headless = open.profileId === undefined || profileId === INCOGNITO_BROWSER_PROFILE_ID;
         if (!existing) closeIdleAgentTabs();
         const tab =
           existing ??
@@ -2612,6 +2615,7 @@ const make = Effect.gen(function* () {
                 runtime: "server",
                 reveal: false,
                 automationOwner: request.agentSessionId,
+                ...(headless ? { headless: true } : {}),
               },
               { reclaimIdleSlot: true },
             ),
