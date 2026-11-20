@@ -79,11 +79,11 @@ it.layer(layer)("PreviewManager", (it) => {
     }),
   );
 
-  it.effect("opens a server tab with the requested zoom and appearance", () =>
+  it.effect("opens a server tab with the requested zoom, appearance, and headless flag", () =>
     Effect.gen(function* () {
       const threadId = freshThreadId();
       const manager = yield* PreviewManager.PreviewManager;
-      const rendering = { zoomFactor: 0.8, colorScheme: "dark" } as const;
+      const rendering = { zoomFactor: 0.8, colorScheme: "dark", headless: true } as const;
 
       const opened = yield* manager.open({ threadId, runtime: "server", ...rendering });
 
