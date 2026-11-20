@@ -799,7 +799,12 @@ it.effect("a desktop status answers with the last viewport while the renderer ca
       const opened = yield* broker.invoke<PreviewAutomationStatus>({
         scope,
         operation: "open",
-        input: { url: "https://example.com/", reuseExistingTab: false, show: false },
+        input: {
+          url: "https://example.com/",
+          profileId: "default",
+          reuseExistingTab: false,
+          show: false,
+        },
       });
       const measuring = Promise.withResolvers<void>();
       desktopSizeAnswer = () => {
@@ -963,17 +968,31 @@ it.effect("a tab the desktop does not draw is marked headless, so the desktop st
       const { broker, tabId } = yield* ready;
       const manager = yield* Manager.PreviewManager;
       desktopRendersNext = true;
-      const desktopTab = yield* broker.invoke<PreviewAutomationStatus>({
+      const defaultAgentTab = yield* broker.invoke<PreviewAutomationStatus>({
         scope,
         operation: "open",
         input: { reuseExistingTab: false, show: false },
+      });
+      const incognitoAgentTab = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        operation: "open",
+        input: { profileId: "incognito", reuseExistingTab: false, show: false },
+      });
+      // Agent tabs stay headless unless a logged-in desktop profile is explicitly requested.
+      const desktopTab = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        operation: "open",
+        input: { profileId: "default", reuseExistingTab: false, show: false },
       });
       const { sessions } = yield* manager.list({ threadId: scope.thread.threadId });
       const headlessOf = (id: string | null) =>
         sessions.find((session) => session.tabId === id)?.headless;
 
       expect(headlessOf(tabId)).toBe(true);
+      expect(headlessOf(defaultAgentTab.tabId)).toBe(true);
+      expect(headlessOf(incognitoAgentTab.tabId)).toBe(true);
       expect(headlessOf(desktopTab.tabId)).toBeUndefined();
+      expect(desktopConnections).toHaveLength(1);
     }),
   ).pipe(Effect.provide(layer)),
 );
@@ -1008,7 +1027,12 @@ it.effect("an agent's tab the reloaded desktop dropped goes back to the desktop"
       const opened = yield* broker.invoke<PreviewAutomationStatus>({
         scope,
         operation: "open",
-        input: { url: "https://example.com/?t=1", reuseExistingTab: false, open: false },
+        input: {
+          url: "https://example.com/?t=1",
+          profileId: "default",
+          reuseExistingTab: false,
+          open: false,
+        },
       });
       const tabId = PreviewTabId.make(opened.tabId!);
       // The renderer reloads on another thread: its webview goes, and it only mounts this
@@ -1077,7 +1101,12 @@ it.effect("a desktop page that loaded before the server attached reports its loa
       const opened = yield* broker.invoke<PreviewAutomationStatus>({
         scope,
         operation: "open",
-        input: { url: desktopPageUrl, reuseExistingTab: false, show: false },
+        input: {
+          url: desktopPageUrl,
+          profileId: "default",
+          reuseExistingTab: false,
+          show: false,
+        },
       });
       let event = yield* PubSub.take(events);
       while (event.type !== "navigated" || event.tabId !== opened.tabId) {
@@ -1867,7 +1896,7 @@ it.effect("closing a desktop tab during setup unloads its page before disconnect
         .invoke<PreviewAutomationStatus>({
           scope,
           operation: "open",
-          input: { reuseExistingTab: false, open: false },
+          input: { profileId: "default", reuseExistingTab: false, open: false },
         })
         .pipe(Effect.result, Effect.forkScoped);
       yield* Effect.promise(() => started.promise);
@@ -1910,7 +1939,7 @@ it.effect.each(["agent", "client", "all", "concurrent"] as const)(
         const opened = yield* broker.invoke<PreviewAutomationStatus>({
           scope,
           operation: "open",
-          input: { reuseExistingTab: false, open: false },
+          input: { profileId: "default", reuseExistingTab: false, open: false },
         });
         const tabId = PreviewTabId.make(opened.tabId!);
         const { context, browser } = desktopConnections[0]!;
@@ -3018,7 +3047,7 @@ it.effect("a desktop tab reports the size the desktop draws after a resize", () 
       const opened = yield* broker.invoke<PreviewAutomationStatus>({
         scope,
         operation: "open",
-        input: { reuseExistingTab: false, show: false },
+        input: { profileId: "default", reuseExistingTab: false, show: false },
       });
       const tabId = PreviewTabId.make(opened.tabId!);
       const { context } = desktopConnections.at(-1)!;
@@ -3418,7 +3447,7 @@ it.effect("preview_open reports a hidden desktop tab it reveals as visible", () 
       const created = yield* broker.invoke<PreviewAutomationStatus>({
         scope,
         operation: "open",
-        input: { reuseExistingTab: false, open: false },
+        input: { profileId: "default", reuseExistingTab: false, open: false },
       });
       const tabId = PreviewTabId.make(created.tabId!);
       expect(created.visible).toBe(false);
@@ -3949,7 +3978,7 @@ it.effect("a full server takes back the slot of the longest idle agent tab nobod
         return broker.invoke<PreviewAutomationStatus>({
           scope: asSession(providerSessionId),
           operation: "open",
-          input: { reuseExistingTab: false, open: false },
+          input: { profileId: "default", reuseExistingTab: false, open: false },
         });
       };
       const opened: Array<string> = [];
@@ -4158,7 +4187,7 @@ it.effect("preview_open rejects a desktop navigation that failed before automati
         .invoke<PreviewAutomationStatus>({
           scope,
           operation: "open",
-          input: { url: failure.url, reuseExistingTab: false, open: false },
+          input: { url: failure.url, profileId: "default", reuseExistingTab: false, open: false },
         })
         .pipe(Effect.flip);
       expect(error).toMatchObject({
