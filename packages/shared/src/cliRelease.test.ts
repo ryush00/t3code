@@ -1,8 +1,24 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { cliArchiveTarCommand, newestCliReleaseVersion, parseChecksums } from "./cliRelease.ts";
+import {
+  cliArchiveTarCommand,
+  newestCliReleaseVersion,
+  parseChecksums,
+  resolveCliReleaseRepository,
+} from "./cliRelease.ts";
 
 describe("cliRelease", () => {
+  it("resolves a valid build-time release repository and falls back to upstream otherwise", () => {
+    expect(resolveCliReleaseRepository("ryush00/t3code")).toBe("ryush00/t3code");
+    expect(resolveCliReleaseRepository("  ryush00/t3code  ")).toBe("ryush00/t3code");
+    expect(resolveCliReleaseRepository(undefined)).toBe("pingdotgg/t3code");
+    expect(resolveCliReleaseRepository("")).toBe("pingdotgg/t3code");
+    expect(resolveCliReleaseRepository("ryush00")).toBe("pingdotgg/t3code");
+    expect(resolveCliReleaseRepository("ryush00/t3code/extra")).toBe("pingdotgg/t3code");
+    expect(resolveCliReleaseRepository("../t3code")).toBe("pingdotgg/t3code");
+    expect(resolveCliReleaseRepository("ryush00/..")).toBe("pingdotgg/t3code");
+    expect(resolveCliReleaseRepository("ryush00/t3code?x=1")).toBe("pingdotgg/t3code");
+  });
   it("parses sha256sum output including binary-mode markers", () => {
     const checksums = parseChecksums(
       [
