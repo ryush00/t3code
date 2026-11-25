@@ -51,7 +51,11 @@ jobs:
             exit 1
           fi
           base="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.$((BASH_REMATCH[3] + 1))"
-          version="${base}-nightly.$(date -u +%Y%m%d).${GITHUB_RUN_NUMBER}"
+          # Offset fork build numbers above upstream's run counter so fork nightlies
+          # stay in X.Y.Z-nightly.YYYYMMDD.N format without colliding with or sorting
+          # below same-day upstream releases.
+          fork_build_number=$((1000000 + GITHUB_RUN_NUMBER))
+          version="${base}-nightly.$(date -u +%Y%m%d).${fork_build_number}"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=v$version" >> "$GITHUB_OUTPUT"
           echo "release_name=T3 Code Fork Nightly $version (${GITHUB_SHA:0:12})" >> "$GITHUB_OUTPUT"
