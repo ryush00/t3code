@@ -2,6 +2,8 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   CLI_RELEASE_BASE_URL_ENV,
   CLI_RELEASE_CHANNELS,
+  CLI_RELEASE_REPOSITORY,
+  DEFAULT_CLI_RELEASE_REPOSITORY,
   cliReleaseIndexPageUrl,
   cliReleaseChannelOf,
   newestCliReleaseVersion,
@@ -495,6 +497,8 @@ export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
     }
   }
 
+  const releaseBaseUrl =
+    mirror?.feedUrl ?? (environment[CLI_RELEASE_BASE_URL_ENV]?.trim() || undefined);
   const runtime = yield* ensurePinnedRuntimeInstalled({
     onProgress: progress.report,
     baseDir: input.baseDir,
@@ -505,7 +509,7 @@ export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
     httpClient,
     platform,
     arch,
-    releaseBaseUrl: mirror?.feedUrl ?? (environment[CLI_RELEASE_BASE_URL_ENV]?.trim() || undefined),
+    releaseBaseUrl,
     requirePublishedRelease: mirror !== undefined,
     validate: (runtime) =>
       runStagedServicePreflight({
@@ -542,9 +546,12 @@ export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
       Effect.fail(
         new CliUpdateError({
           reason:
-            mirror === undefined
-              ? `No release archive was published for t3@${targetVersion}.`
-              : `${mirror.organization}'s update mirror has no t3@${targetVersion} for this machine.`,
+            mirror !== undefined
+              ? `${mirror.organization}'s update mirror has no t3@${targetVersion} for this machine.`
+              : releaseBaseUrl === undefined &&
+                  CLI_RELEASE_REPOSITORY !== DEFAULT_CLI_RELEASE_REPOSITORY
+                ? `No release archive was published for t3@${targetVersion} in ${CLI_RELEASE_REPOSITORY}.`
+                : `No release archive was published for t3@${targetVersion}.`,
         }),
       ),
     ),
