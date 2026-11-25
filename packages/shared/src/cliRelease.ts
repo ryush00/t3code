@@ -3,7 +3,7 @@ import * as Schema from "effect/Schema";
 
 import { compareSemverVersions } from "./semver.ts";
 
-const DEFAULT_CLI_RELEASE_REPOSITORY = "pingdotgg/t3code";
+export const DEFAULT_CLI_RELEASE_REPOSITORY = "pingdotgg/t3code";
 const GITHUB_REPOSITORY_SEGMENT = /^[A-Za-z0-9._-]+$/u;
 
 declare const __T3CODE_BUILD_RELEASE_REPOSITORY__: string | undefined;
@@ -22,7 +22,7 @@ export function resolveCliReleaseRepository(repository: string | undefined): str
     : DEFAULT_CLI_RELEASE_REPOSITORY;
 }
 
-const CLI_RELEASE_REPOSITORY = resolveCliReleaseRepository(
+export const CLI_RELEASE_REPOSITORY = resolveCliReleaseRepository(
   typeof __T3CODE_BUILD_RELEASE_REPOSITORY__ === "undefined"
     ? undefined
     : __T3CODE_BUILD_RELEASE_REPOSITORY__,
@@ -155,8 +155,11 @@ export function acceptsTrackSwitchRelease(
 }
 
 /** Page until the channel matches; nightlies can push preview/stable releases past the first page. */
-export function cliReleaseIndexPageUrl(page: number): string {
-  return `https://api.github.com/repos/${CLI_RELEASE_REPOSITORY}/releases?per_page=100&page=${page}`;
+export function cliReleaseIndexPageUrl(
+  page: number,
+  repository: string = CLI_RELEASE_REPOSITORY,
+): string {
+  return `https://api.github.com/repos/${repository}/releases?per_page=100&page=${page}`;
 }
 
 /** Draft assets are not downloadable. */
