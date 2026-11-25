@@ -35,6 +35,7 @@ interface HarnessOptions {
   readonly requestUpdate?: ServiceLauncherClient.ServiceLauncherClient["Service"]["requestUpdate"];
   readonly desktopAppUpdate?: DesktopAppUpdate.DesktopAppUpdate["Service"];
   readonly policy?: ManagedPolicyDocument;
+  readonly releaseRepository?: string;
 }
 
 const archiveBytes = new TextEncoder().encode("not really a tarball");
@@ -150,7 +151,11 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
   const config = yield* ServerConfig.ServerConfig.pipe(
     Effect.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
   );
-  const selfUpdate = yield* ServerSelfUpdate.make().pipe(
+  const selfUpdate = yield* ServerSelfUpdate.make(
+    options.releaseRepository === undefined
+      ? undefined
+      : { releaseRepository: options.releaseRepository },
+  ).pipe(
     Effect.provideService(ProcessRunner.ProcessRunner, runner),
     Effect.provideService(ServiceLauncherClient.ServiceLauncherClient, launcher),
     Effect.provideService(
@@ -217,6 +222,27 @@ it.layer(NodeServices.layer)("server self update", (it) => {
       failDownload = false;
       expect((yield* selfUpdate.update({ targetVersion: "1.1.0" })).updateId).toBe("launcher-id");
       expect(order).toEqual(["extract", "preflight", "accept"]);
+    }),
+  );
+
+  it.effect("explains the fork repository mismatch when fork checksums return 404", () =>
+    Effect.gen(function* () {
+      const requests: string[] = [];
+      const { selfUpdate, order } = yield* makeHarness({
+        releaseRepository: "ryush00/t3code",
+        httpClient: HttpClient.make((request) => {
+          requests.push(request.url);
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(request, new Response("Not Found", { status: 404 })),
+          );
+        }),
+      });
+      const error = yield* selfUpdate.update({ targetVersion: "1.1.0" }).pipe(Effect.flip);
+      expect(error.reason).toBe(
+        "t3@1.1.0 is not published in ryush00/t3code. This server tracks the ryush00/t3code fork; update it from a ryush00/t3code build or run `t3 update` on the server.",
+      );
+      expect(requests).toHaveLength(1);
+      expect(order).toEqual([]);
     }),
   );
 
