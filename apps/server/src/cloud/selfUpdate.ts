@@ -22,6 +22,8 @@ import { HttpClient } from "effect/http";
 
 import {
   CLI_RELEASE_BASE_URL_ENV,
+  CLI_RELEASE_REPOSITORY,
+  DEFAULT_CLI_RELEASE_REPOSITORY,
   cliReleaseChannelOf,
   crossesReleaseTrack,
 } from "@t3tools/shared/cliRelease";
@@ -133,7 +135,10 @@ export function trackSwitchBlockReason(input: {
     : null;
 }
 
-export const make = Effect.fn("cloud.server_self_update.make")(function* () {
+export const make = Effect.fn("cloud.server_self_update.make")(function* (options?: {
+  readonly releaseRepository?: string;
+}) {
+  const releaseRepository = options?.releaseRepository ?? CLI_RELEASE_REPOSITORY;
   const serverConfig = yield* ServerConfig.ServerConfig;
   const desktopAppUpdate = yield* DesktopAppUpdate.DesktopAppUpdate;
   const policy = yield* ManagedPolicy.ManagedPolicy;
@@ -241,6 +246,18 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
           if (mirror !== undefined && isUnpublishedRelease(error)) {
             return failWith(
               `${mirror.organization}'s update mirror has no t3@${targetVersion} for this machine.`,
+              error,
+            );
+          }
+          if (
+            mirror === undefined &&
+            releaseBaseUrl === undefined &&
+            releaseRepository !== DEFAULT_CLI_RELEASE_REPOSITORY &&
+            error.step === "downloading the t3 release checksums" &&
+            error.httpStatus === 404
+          ) {
+            return failWith(
+              `t3@${targetVersion} is not published in ${releaseRepository}. This server tracks the ${releaseRepository} fork; update it from a ${releaseRepository} build or run \`t3 update\` on the server.`,
               error,
             );
           }

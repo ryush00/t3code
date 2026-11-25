@@ -36,6 +36,7 @@ const makeService = Effect.fnUntraced(function* (
   run: ProcessRunner.ProcessRunner["Service"]["run"],
   publicRegistry: HttpClient.HttpClient = noPublicRegistry,
   npmInstalled = true,
+  releaseRepository?: string,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -43,7 +44,9 @@ const makeService = Effect.fnUntraced(function* (
   for (const name of ["npm", "npm.cmd"]) {
     yield* fs.writeFileString(path.join(npmBin, name), "", { mode: 0o755 });
   }
-  return yield* NpmRelease.make().pipe(
+  return yield* NpmRelease.make(
+    releaseRepository === undefined ? undefined : { releaseRepository },
+  ).pipe(
     Effect.provideService(ProcessRunner.ProcessRunner, { run }),
     Effect.provideService(HttpClient.HttpClient, publicRegistry),
     Effect.provideService(HostProcess.Environment, {
@@ -195,4 +198,45 @@ it.effect.each(["--registry=https://example.com", "../other", "other-package@lat
       const service = yield* makeService(() => Effect.die("invalid specs must not spawn npm"));
       expect(Result.isFailure(yield* service.get({ spec }).pipe(Effect.result))).toBe(true);
     }),
+);
+
+it.effect("resolves nightly releases from the fork repository instead of upstream npm", () =>
+  Effect.gen(function* () {
+    const urls: string[] = [];
+    const npmCalls: string[] = [];
+    const service = yield* makeService(
+      (input) => {
+        npmCalls.push(input.args.join(" "));
+        return Effect.succeed(output(JSON.stringify({ version: "0.1.11" })));
+      },
+      HttpClient.make((request) => {
+        urls.push(request.url);
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            new Response(
+              JSON.stringify([
+                { tag_name: "v9.9.9-nightly.20261125.99", draft: true },
+                { tag_name: "v9.9.9-nightly.20261125.37" },
+                { tag_name: "v0.1.10" },
+              ]),
+            ),
+          ),
+        );
+      }),
+      true,
+      "ryush00/t3code",
+    );
+
+    const nightly = yield* service.get({ spec: "nightly" });
+    expect(nightly?.version).toBe("9.9.9-nightly.20261125.37");
+    expect(nightly?.databaseMigration).toBeTypeOf("number");
+    expect(urls).toEqual([
+      "https://api.github.com/repos/ryush00/t3code/releases?per_page=100&page=1",
+    ]);
+    expect(npmCalls).toEqual([]);
+
+    expect(yield* service.get({ spec: "latest" })).toEqual({ version: "0.1.11" });
+    expect(npmCalls).toHaveLength(1);
+  }),
 );
