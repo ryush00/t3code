@@ -3,7 +3,15 @@ import {
   ServerNpmReleaseInput,
   type ServerNpmRelease,
 } from "@t3tools/contracts";
-import { npmReleaseDatabaseMigration } from "@t3tools/shared/cliRelease";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import {
+  CLI_RELEASE_REPOSITORY,
+  DEFAULT_CLI_RELEASE_REPOSITORY,
+  cliReleaseIndexPageUrl,
+  newestCliReleaseVersion,
+  npmReleaseDatabaseMigration,
+} from "@t3tools/shared/cliRelease";
+import { compareSemverVersions } from "@t3tools/shared/semver";
 import { resolveCommandPath } from "@t3tools/shared/shell";
 import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
@@ -13,8 +21,10 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
-import { FetchHttpClient, HttpClient } from "effect/http";
+import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 
+import packageJson from "../../package.json" with { type: "json" };
+import { BUILD_MIGRATION_HEAD } from "../persistence/databaseMigrationHead.ts";
 import * as ProcessRunner from "../processRunner.ts";
 
 const Version = Schema.String.check(Schema.isPattern(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/));
@@ -23,10 +33,21 @@ const Manifest = Schema.Struct({ version: Version, t3code: Schema.optionalKey(Sc
 const decodeManifest = Schema.decodeUnknownOption(
   Schema.fromJsonString(Schema.Union([Manifest, Schema.Tuple([Manifest]), Version])),
 );
+const decodeReleaseIndex = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Array(
+      Schema.Struct({
+        tag_name: Schema.String,
+        draft: Schema.optional(Schema.Boolean),
+      }),
+    ),
+  ),
+);
 const decodeError = Schema.decodeUnknownOption(
   Schema.fromJsonString(Schema.Struct({ error: Schema.Struct({ code: Schema.String }) })),
 );
 const decodeInput = Schema.decodeUnknownEffect(ServerNpmReleaseInput);
+const FORK_RELEASE_INDEX_MAX_PAGES = 10;
 
 export class NpmRelease extends Context.Service<
   NpmRelease,
@@ -55,9 +76,56 @@ function toRelease(spec: string, json: string) {
   });
 }
 
-export const make = Effect.fn("NpmRelease.make")(function* () {
+export const make = Effect.fn("NpmRelease.make")(function* (options?: {
+  readonly releaseRepository?: string;
+}) {
+  const releaseRepository = options?.releaseRepository ?? CLI_RELEASE_REPOSITORY;
   const runner = yield* ProcessRunner.ProcessRunner;
   const http = yield* HttpClient.HttpClient;
+  const environment = yield* HostProcess.Environment;
+  const lookupForkNightly = Effect.fn("NpmRelease.lookupForkNightly")(function* () {
+    const unreachable = new ServerNpmReleaseError({
+      reason: `Could not list nightly releases from ${releaseRepository}.`,
+    });
+    const githubToken =
+      environment.GH_TOKEN?.trim() || environment.GITHUB_TOKEN?.trim() || undefined;
+    for (let page = 1; page <= FORK_RELEASE_INDEX_MAX_PAGES; page += 1) {
+      const baseRequest = HttpClientRequest.get(
+        cliReleaseIndexPageUrl(page, releaseRepository),
+      ).pipe(HttpClientRequest.setHeader("Accept", "application/vnd.github+json"));
+      const request =
+        githubToken === undefined
+          ? baseRequest
+          : HttpClientRequest.setHeader(baseRequest, "Authorization", `Bearer ${githubToken}`);
+      const json = yield* Effect.gen(function* () {
+        const response = yield* http.execute(request);
+        if (response.status < 200 || response.status >= 300) return yield* unreachable;
+        return yield* response.text;
+      }).pipe(
+        Effect.timeout(Duration.seconds(15)),
+        Effect.mapError(() => unreachable),
+      );
+      const releases = Option.getOrUndefined(decodeReleaseIndex(json));
+      if (releases === undefined) {
+        return yield* new ServerNpmReleaseError({
+          reason: `GitHub returned invalid release metadata for ${releaseRepository}.`,
+        });
+      }
+      const version = newestCliReleaseVersion(releases, "nightly");
+      if (version !== undefined) {
+        const databaseMigration =
+          compareSemverVersions(version, packageJson.version) >= 0
+            ? BUILD_MIGRATION_HEAD
+            : undefined;
+        return {
+          version,
+          ...(databaseMigration === undefined ? {} : { databaseMigration }),
+        };
+      }
+      if (releases.length < 100) break;
+    }
+    return null;
+  });
   const lookupPublic = Effect.fn("NpmRelease.lookupPublic")(function* (spec: string) {
     const unreachable = new ServerNpmReleaseError({
       reason: "npm is not installed and the public npm registry could not be reached.",
@@ -79,6 +147,9 @@ export const make = Effect.fn("NpmRelease.make")(function* () {
     capacity: 32,
     timeToLive: Duration.minutes(1),
     lookup: Effect.fn("NpmRelease.lookup")(function* (spec: string) {
+      if (spec === "nightly" && releaseRepository !== DEFAULT_CLI_RELEASE_REPOSITORY) {
+        return yield* lookupForkNightly();
+      }
       // Without npm there is no configured registry to honor, so use the public one.
       const npmPath = yield* resolveCommandPath("npm");
       if (npmPath === null) return yield* lookupPublic(spec);
